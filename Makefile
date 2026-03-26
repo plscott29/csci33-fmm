@@ -1,1 +1,2 @@
-gcc-15 -Wall -std=c99 -fopenmp -o fmm fmm.c -lm
+all:
+	gcc-15 -Wall -std=c99 -fopenmp -o fmm fmm.c -lm
