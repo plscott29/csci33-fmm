@@ -5,7 +5,7 @@
 typedef struct {
     float x;
     float y;
-    float q;
+    int q;
     float p;
 } Particle;
 
@@ -72,13 +72,14 @@ int main(int argc, char * argv[])
     }
 
     // run step 1: tree construction & sorting
+    /*
     if (construct_tree(particles, nodes, num_particles, num_levels) != 0) {
         fprintf(stderr, "Error constructing tree\n");
         free(particles);
         free(nodes);
         return 1;
     }
-
+    */
     return 0;
 }
 
