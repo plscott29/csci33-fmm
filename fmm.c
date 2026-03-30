@@ -5,9 +5,9 @@
 #include <complex.h>
 
 typedef struct {
+    float complex z;
     float x;
     float y;
-    float complex z;
     int q;
     float p;
 } Particle;
@@ -39,8 +39,17 @@ int parent_idx(int child_idx) {return child_idx/4-1;}
 
 //float mid_x(int node_idx) {}
 
-//sort particles, return bounds for the quadrants as a Partition
-Partition four_sort(Particle *particles, Node *node) { //int start, int end, float x_mid, float y_mid) {
+/* 
+    input:
+        - particles: array of particles
+        - node: node to partition, which points to a subarray of particles with start & end indices
+
+    output:
+        - returns a Partition struct with the indices of the start, end, and three quadrants of the input node
+
+    Sorts subarray of particles corresponding to the input node into four quadrants based on x and y values
+*/
+Partition four_sort(Particle *particles, Node *node) {
     Particle temp_particle;
     int low_idx = node->start;
     int high_idx = node->end-1;
@@ -129,8 +138,11 @@ int construct_tree(Particle *particles, Node *nodes, int num_particles, int num_
     Node *root = malloc(sizeof(Node));
     //root->idx = -1;
     root->level = 0;
-    root->start = 0; root->end = num_particles;
-    root->x_mid = 0.5; root->y_mid = 0.5;
+    root->start = 0;
+    root->end = num_particles;
+    
+    // TODO: parameterize bounding box?
+    root->x_mid = 0.5; root->y_mid = 0.5; 
     root->z_mid = 0.5 + 0.5*I;
     //printf("root->z_mid r %f, i%f\n", creal(root->z_mid), cimag(root->z_mid));
     // need to manually populate the first four elements of nodes[] using four_sort
@@ -261,13 +273,17 @@ int main(int argc, char * argv[])
         return 1;
     }
     for (int i = 0; i < num_particles; i++) {
-        if (fscanf(fp, "%f,%f,%d", &particles[i].x, &particles[i].y, &particles[i].q) != 3) {
+        int x, y, q;
+        if (fscanf(fp, "%d,%d,%d", &x, &y, &q) != 3) {
             fprintf(stderr, "Error reading particle data from file: %s\n", input_file);
             free(particles);
             fclose(fp);
             return 1;
         }
-        particles[i].z = particles[i].x + particles[i].y*I; //TODO: incorporate this into the fscanf line above
+        particles[i].z = x + y*I;
+        particles[i].x = x;
+        particles[i].y = y;
+        particles[i].q = q;
     }
     fclose(fp);
 
