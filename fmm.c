@@ -37,6 +37,14 @@ int child_idx(int parent_idx) {return (parent_idx+1)*4;}
 //outputs the index of the parent given a child index
 int parent_idx(int child_idx) {return child_idx/4-1;}
 
+int choose(int n, int k) {
+    int choo = 1;
+    if (k < n-k) {k=n-k;} //nCk=nC(n-k), use larger of k, n-k for computation
+    for (int i = n; i > k; i--) {choo = choo*i;}
+    for (int i = 1; i <= n-k; i++) {choo = choo/i;}
+    return choo;
+}
+
 //float mid_x(int node_idx) {}
 
 /* 
@@ -225,6 +233,20 @@ void ofs(Particle *particles, Node *node, int P) {
     }
 }
 
+void ofo(Node *nodes, int p_idx, int P, int *binom) {
+    int c_idx = child_idx(p_idx);
+    for (int i = 0; i < 4; i++) {
+        float complex offset = nodes[c_idx+i].z_mid - nodes[p_idx].z_mid;
+        for (int r = 1; r <= P; r++) {
+            float complex offset_power = 1;
+            for (int s = r; s >= 0; s--) { //iterate backwards to fill in multipole expansions from low degree to high degree
+                nodes[p_idx].expansions[r-1] += binom[(r-1)*P+(s-1)]*offset_power*nodes[c_idx+i].expansions[s-1];
+                offset_power *= offset;
+            }
+        }
+    }
+}
+
 int calculate_multipole(Particle *particles, Node *nodes, int num_particles, int num_levels, int P) {
     int num_nodes = 0; // total nodes
     for (int k = 1; k <= num_levels; k++) {num_nodes = num_nodes + pow(4,k);}
@@ -236,6 +258,24 @@ int calculate_multipole(Particle *particles, Node *nodes, int num_particles, int
         ofs(particles, &nodes[i], P);
         //printf("node %d after: r %f, i %f\n\n", i, creal(nodes[i].expansions[1]), cimag(nodes[i].expansions[1]));
     }
+
+    //precalculate binomial coefs
+    int *binom = (int*)malloc(P*P*sizeof(int));
+    for (int i = 1; i <= P; i++) {
+        for (int j=1;j <= i; j++) {
+            binom[P*(i-1)+(j-1)] = choose(i,j);
+        }
+    }
+
+    for (int i = num_nodes-num_leaves-2; i > 0; i--) {
+        printf("node number: %d\n", i);
+        printf("node %d before: r %f, i %f\n", i, creal(nodes[i].expansions[1]), cimag(nodes[i].expansions[1]));
+        printf("next node (%d) before: r %f, i %f\n", i-1, creal(nodes[i-1].expansions[1]), cimag(nodes[i-1].expansions[1]));
+        ofo(nodes, i, P, binom);
+        printf("node %d after: r %f, i %f\n\n", i, creal(nodes[i].expansions[1]), cimag(nodes[i].expansions[1]));
+    }
+
+    free(binom);
     return 0;
 }
 
@@ -273,8 +313,9 @@ int main(int argc, char * argv[])
         return 1;
     }
     for (int i = 0; i < num_particles; i++) {
-        int x, y, q;
-        if (fscanf(fp, "%d,%d,%d", &x, &y, &q) != 3) {
+        float x, y;
+        int q;
+        if (fscanf(fp, "%f,%f,%d", &x, &y, &q) != 3) {
             fprintf(stderr, "Error reading particle data from file: %s\n", input_file);
             free(particles);
             fclose(fp);
