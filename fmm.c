@@ -225,21 +225,56 @@ void ofs(Particle *particles, Node *node, int P) {
     }
 }
 
-void ofo(Node *nodes, int p_idx, int P, int *binom) {
-    int c_idx = child_idx(p_idx);
+/*
+    input:
+        - nodes: tree of Nodes representing FMM hiearchical decomposition
+        - node_idx: index of node in nodes array for which multipole expansion is being computed
+        - P: number of terms in multipole expansion
+        - binom: precomputed array of binomial coefficients (of size P*P)
+    output:
+        - nodes[node_idx].expansions: multipole expansion coefficients for this node are updated
+          in place using multipole expansions of its children.
+          
+    Compute "outgoing from outgoing" multipole expansions for this node according to:
+        M_r = sum_{s=0}^{r} binom(r,s) * (z_c - z_p)^(r-s) * M_s^c
+    where M_r are the multipole expansion coefficients of the parent node,
+    z_c is the center of the child node c, z_p is the center of the parent node,
+    r is the index of the multipole expansion coefficient of the parent node,
+    s is the index of the multipole expansion coefficient of the child node c,
+    M_s^c are the multipole expansion coefficients of the child node c,
+    and binom(r,s) is the binomial coefficient "r choose s".
+*/
+void ofo(Node *nodes, int node_idx, int P, int *binom) {
+    int c_idx = child_idx(node_idx);    // index of first child of this node
+
+    // iterate over children
     for (int i = 0; i < 4; i++) {
-        float complex offset = nodes[c_idx+i].z_mid - nodes[p_idx].z_mid;
+        float complex offset = nodes[c_idx+i].z_mid - nodes[node_idx].z_mid;
+
         for (int r = 1; r <= P; r++) {
-            float complex offset_power = 1;
-            for (int s = r; s >= 0; s--) { //iterate backwards to fill in multipole expansions from low degree to high degree
-                nodes[p_idx].expansions[r-1] += binom[(r-1)*P+(s-1)]*offset_power*nodes[c_idx+i].expansions[s-1];
-                offset_power *= offset;
+            // accumulate powers of offset for use in binomial expansion
+            float complex offset_power_acc = 1;
+
+            // iterate backwards to fill in multipole expansions from low degree to high degree
+            for (int s = r; s >= 0; s--) {
+                // accumulate contribution of child multipole expansion to parent
+                int r_choose_s = binom[(r-1)*P + (s-1)];
+                nodes[node_idx].expansions[r-1] += r_choose_s * offset_power_acc * nodes[c_idx+i].expansions[s-1];
+                offset_power_acc *= offset;
             }
+
+            // TODO: how do we handle the case s=0? will produce an indexing error at the moment
         }
     }
 }
 
 int calculate_multipole(Particle *particles, Node *nodes, int num_particles, int num_levels, int num_nodes, int P) {
+    /* 
+     * Upwards pass: compute outgoing expansion of each box from leaf nodes up to the root. 
+     * For a leaf node, compute expansion directly particles in the node ("outgoing from sources"); 
+     * for a parent node, use outgoing expansions of its children to ("outgoing from outgoing")
+     */
+
     // compute multipole expansions for all leaf nodes: "outgoing from sources"
     int num_leaves = pow(4, num_levels);
     for (int i = 0; i < num_leaves; i++) {
@@ -247,20 +282,18 @@ int calculate_multipole(Particle *particles, Node *nodes, int num_particles, int
         ofs(particles, &nodes[leaf_idx], P);
     }
 
-    // pre-calculate binomial coefs
+    // pre-compute binomial co-efficients
     int *binom = (int*)malloc(P*P*sizeof(int));
-    for (int i = 1; i <= P; i++) {
-        for (int j=1;j <= i; j++) {
-            binom[P*(i-1)+(j-1)] = choose(i,j);
+    for (int r = 1; r <= P; r++) {
+        for (int s = 1; s <= r; s++) {
+            binom[P*(r-1)+(s-1)] = choose(r,s);
         }
     }
 
-    for (int i = num_nodes-num_leaves-2; i > 0; i--) {
-        printf("node number: %d\n", i);
-        printf("node %d before: r %f, i %f\n", i, creal(nodes[i].expansions[1]), cimag(nodes[i].expansions[1]));
-        printf("next node (%d) before: r %f, i %f\n", i-1, creal(nodes[i-1].expansions[1]), cimag(nodes[i-1].expansions[1]));
+    // compute multipole expansions for all non-leaf nodes: "outgoing from outgoing"
+    // iterate over all non-leaf nodes in reverse order (from bottom of tree up to root)
+    for (int i = (num_nodes - num_leaves) - 1; i > 0; i--) {
         ofo(nodes, i, P, binom);
-        printf("node %d after: r %f, i %f\n\n", i, creal(nodes[i].expansions[1]), cimag(nodes[i].expansions[1]));
     }
 
     free(binom);
