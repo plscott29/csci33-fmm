@@ -4,6 +4,7 @@
 #include <math.h>
 #include <complex.h>
 
+/* Define structs: Particle, Node, Partition */
 typedef struct {
     float complex z;
     float x;
@@ -13,7 +14,6 @@ typedef struct {
 } Particle;
 
 typedef struct {
-    //int idx;
     int level;
     int start;
     int end;
@@ -24,28 +24,30 @@ typedef struct {
 } Node;
 
 typedef struct {
-    int start;
-    int first_quad;
-    int second_quad;
-    int third_quad;
-    int end;
+    int quadrant_bounds[4][2];  // Quadrant ordering: SW/NW/SE/NE
 } Partition;
 
-// outputs the index of the first child given a parent index
-// the other children are the following three indices
-int child_idx(int parent_idx) {return (parent_idx+1)*4;}
-//outputs the index of the parent given a child index
-int parent_idx(int child_idx) {return child_idx/4-1;}
+
+/* Helper functions:
+    - child_idx: given a parent node index, returns the index of the first child in the quadtree
+    - parent_idx: given a child node index, returns the index of the parent node in the quadtree
+    - choose: computes the binomial coefficient "n choose k"
+*/
+int child_idx(int parent_idx) { return (parent_idx+1)*4; }
+int parent_idx(int child_idx) { return child_idx/4-1; }
 
 int choose(int n, int k) {
-    int choo = 1;
-    if (k < n-k) {k=n-k;} //nCk=nC(n-k), use larger of k, n-k for computation
-    for (int i = n; i > k; i--) {choo = choo*i;}
-    for (int i = 1; i <= n-k; i++) {choo = choo/i;}
-    return choo;
-}
+    int c = 1;
+    
+    // nCk = nC(n-k) --> exploit symmetry & use smaller of (k, n-k) for computation
+    if (k > n-k) { k=n-k; }
 
-//float mid_x(int node_idx) {}
+    // compute nCk = n! / (k! * (n-k)!)
+    for (int i = n; i > k; i--)     { c = c*i; }    // n*(n-1)*...*(k+1)
+    for (int i = 1; i <= n-k; i++)  { c = c/i; }    // divide by (n-k)!
+    
+    return c;
+}
 
 /* 
     input:
@@ -53,80 +55,86 @@ int choose(int n, int k) {
         - node: node to partition, which points to a subarray of particles with start & end indices
 
     output:
-        - returns a Partition struct with the indices of the start, end, and three quadrants of the input node
+        - returns a Partition struct with the indices of four quadrants of input node (inclusive)
 
     Sorts subarray of particles corresponding to the input node into four quadrants based on x and y values
 */
 Partition four_sort(Particle *particles, Node *node) {
-    Particle temp_particle;
-    int low_idx = node->start;
-    int high_idx = node->end-1;
-    // sort on x values first
-    for (int i =0; i < node->end - node->start; i++) {
-        if (particles[low_idx].x <= node->x_mid)
-            low_idx++;
+    Particle tmp;
+    int low = node->start;
+    int high = node->end;
+
+    // sort particles by x values first
+    while (low < high) {
+        if (particles[low].x <= node->x_mid)
+            low++;
+        else if (particles[high].x > node->x_mid)
+            high--;
         else {
-            if (particles[high_idx].x > node->x_mid) {
-                high_idx--;
-            }
-            else { //swap low and high idx particles
-                temp_particle = particles[high_idx];
-                particles[high_idx] = particles[low_idx];
-                particles[low_idx] = temp_particle;
-                low_idx++;
-            }
+            // swap particles at indices low & high 
+            tmp = particles[high];
+            particles[high] = particles[low];
+            particles[low] = tmp;
+            low++;
+            high--;
         }
     }
 
-    // now [0, low_idx] <= x_mid and [low_idx,end-start] > x_mid
-    int second_quad = low_idx;
+    // particles with x <= x_mid are now in range [node->start, low-1]
+    // and particles with x > x_mid are in range [low, node->end]
+    int x_split = low;  // index of first particle in right half (x > x_mid)
 
-    // sort on y values for all points with x <= x_mid
-    low_idx = node->start;
-    high_idx = second_quad-1;
-    for (int i =0; i < second_quad - node->start; i++) {
-        if (particles[low_idx].y <= node->y_mid)
-            low_idx++;
+    // sort particles by y values for those with x <= x_mid
+    // (i.e., all particles belonging to left half)
+    low = node->start;
+    high = x_split - 1;
+    while (low < high) {
+        if (particles[low].y <= node->y_mid)
+            low++;
+        else if (particles[high].y > node->y_mid)
+            high--;
         else {
-            if (particles[high_idx].y > node->y_mid) {
-                high_idx--;
-            }
-            else {
-                temp_particle = particles[high_idx];
-                particles[high_idx] = particles[low_idx];
-                particles[low_idx] = temp_particle;
-                low_idx++;
-            }
+            tmp = particles[high];
+            particles[high] = particles[low];
+            particles[low] = tmp;
+            low++;
+            high--;
         }
     }
 
-    // now [0,low_idx] <= y_mid and [low_idx, second_quad] > y_mid
-    int first_quad = low_idx;
+    // particles with x <= x_mid and y <= y_mid are now in range [node->start, low-1]
+    // and particles with x <= x_mid and y > y_mid are in range [low, x_split-1]
+    int left_y_split = low;
 
-    // sort on y values for all points with x > x_mid
-    low_idx = second_quad;
-    high_idx = node->end - 1;
-    for (int i =0; i < node->end - second_quad; i++) {
-        if (particles[low_idx].y <= node->y_mid)
-            low_idx++;
+    // sort particles by y values for those with x > x_mid
+    low = x_split;
+    high = node->end;
+    while (low < high) {
+        if (particles[low].y <= node->y_mid)
+            low++;
+        else if (particles[high].y > node->y_mid)
+            high--;
         else {
-            if (particles[high_idx].y > node->y_mid) {
-                high_idx--;
-            }
-            else {
-                temp_particle = particles[high_idx];
-                particles[high_idx] = particles[low_idx];
-                particles[low_idx] = temp_particle;
-                low_idx++;
-            }
+            tmp = particles[high];
+            particles[high] = particles[low];
+            particles[low] = tmp;
+            low++;
+            high--;
         }
     }
 
-    // now [0,low_idx] is leq y_mid and [low_idx, second_quad] is gt y_mid
-    int third_quad = low_idx;
+    // particles with x > x_mid and y <= y_mid are now in range [x_split, low-1]
+    // and particles with x > x_mid and y > y_mid are in range [low, node->end]
+    int right_y_split = low;
 
-    Partition quadrants = {node->start, first_quad, second_quad, third_quad, node->end};
-    return quadrants;
+    return (Partition) {
+        .quadrant_bounds = {
+            {node->start, left_y_split-1},
+            {left_y_split, x_split-1},
+            {x_split, right_y_split-1},
+            {right_y_split, node->end}
+        }
+    };
 }
 
 /*
@@ -143,75 +151,72 @@ Partition four_sort(Particle *particles, Node *node) {
 */
 int construct_tree(Particle *particles, Node *nodes, int num_particles, int num_levels)
 {
+    // initialize root node
     Node *root = malloc(sizeof(Node));
-    //root->idx = -1;
+    if (root == NULL) {
+        return -1;
+    }
+
+    // root->idx = -1; 
     root->level = 0;
-    root->start = 0;
-    root->end = num_particles;
+    root->start = 0; root->end = num_particles-1;
     
     // TODO: parameterize bounding box?
     root->x_mid = 0.5; root->y_mid = 0.5; 
     root->z_mid = 0.5 + 0.5*I;
-    //printf("root->z_mid r %f, i%f\n", creal(root->z_mid), cimag(root->z_mid));
-    // need to manually populate the first four elements of nodes[] using four_sort
-    Partition boundaries = four_sort(particles, root);
 
-    // manually set the first level
-    nodes[0].level = 1; nodes[0].start = boundaries.start; nodes[0].end = boundaries.first_quad;
-    nodes[0].x_mid = 0.25; nodes[0].y_mid = 0.25; nodes[0].z_mid = nodes[0].x_mid + nodes[0].y_mid*I;
-    nodes[1].level = 1; nodes[1].start = boundaries.first_quad; nodes[1].end = boundaries.second_quad;
-    nodes[1].x_mid = 0.25; nodes[1].y_mid = 0.75; nodes[1].z_mid = nodes[1].x_mid + nodes[1].y_mid*I;
-    nodes[2].level = 1; nodes[2].start = boundaries.second_quad; nodes[2].end = boundaries.third_quad;
-    nodes[2].x_mid = 0.75; nodes[2].y_mid = 0.25; nodes[2].z_mid = nodes[2].x_mid + nodes[2].y_mid*I;
-    nodes[3].level = 1; nodes[3].start = boundaries.third_quad; nodes[3].end = boundaries.end;
-    nodes[3].x_mid = 0.75; nodes[3].y_mid = 0.75; nodes[3].z_mid = nodes[3].x_mid + nodes[3].y_mid*I;
+    // sort particles into four quadrants at the root
+    Partition partitions = four_sort(particles, root);
+    
+    // quadrant ordering: SW, NW, SE, NE
+    float x_mids[4] = {0.25, 0.25, 0.75, 0.75};
+    float y_mids[4] = {0.25, 0.75, 0.25, 0.75};
+
+    // create first level of child nodes
+    for (int i=0; i < 4; i++) {
+        nodes[i].level = 1;
+        nodes[i].start = partitions.quadrant_bounds[i][0];
+        nodes[i].end = partitions.quadrant_bounds[i][1];
+        nodes[i].x_mid = x_mids[i];
+        nodes[i].y_mid = y_mids[i];
+        nodes[i].z_mid = nodes[i].x_mid + nodes[i].y_mid*I;
+    }
 
     // set the rest of the levels
     int p_idx = 0;
     int c_idx;
     int num_boxes = 4;
-    for (int level = 1; level < num_levels; level++) { // level iteration number refers to the level of the parent
-        for (int i = 0; i < num_boxes; i++) { // num_boxes is the number of parent boxes
-            // sort and get the partition of the subarray of particles
-            boundaries = four_sort(particles, &nodes[p_idx]);
 
-            // set four nodes
-            //printf("quads: %d, %d, %d, %d, %d\n", boundaries.start, boundaries.first_quad,
-            //    boundaries.second_quad, boundaries.third_quad, boundaries.end);
+    for (int level = 1; level < num_levels; level++) {  // 'level' refers to level of parent
+        for (int i = 0; i < num_boxes; i++) {           // 'num_boxes' is number of parent boxes
+            // sort particles and get the partitions of subarray of particles for this parent node
+            partitions = four_sort(particles, &nodes[p_idx]);
+
+            // set four nodes corresponding to the four quadrants of this parent node
             c_idx = child_idx(p_idx);
-            float shift = 1.0/pow(2, level+2);
 
-            nodes[c_idx].level = level+1;
-            nodes[c_idx].start = boundaries.start; nodes[c_idx].end = boundaries.first_quad;
-            nodes[c_idx].x_mid = nodes[p_idx].x_mid - shift; nodes[c_idx].y_mid = nodes[p_idx].y_mid - shift;
-            nodes[c_idx].z_mid = nodes[c_idx].x_mid + nodes[c_idx].y_mid*I;
-            c_idx++;
+            // calculate offset from parent midpoint to child midpoint:
+            // shift = (1/2^(level+1)) / 2 = 1/2^(level+2)
+            float shift = 1.0 / pow(2, level+2);
 
-            nodes[c_idx].level = level+1;
-            nodes[c_idx].start = boundaries.first_quad; nodes[c_idx].end = boundaries.second_quad;
-            nodes[c_idx].x_mid = nodes[p_idx].x_mid - shift; nodes[c_idx].y_mid = nodes[p_idx].y_mid + shift;
-            nodes[c_idx].z_mid = nodes[c_idx].x_mid + nodes[c_idx].y_mid*I;
-            c_idx++;
+            // quadrant offsets from parent to child with ordering: SW, NW, SE, NE
+            float x_mid_shifts[4] = {-shift, -shift, shift, shift};
+            float y_mid_shifts[4] = {-shift, shift, -shift, shift};
 
-            nodes[c_idx].level = level+1;
-            nodes[c_idx].start = boundaries.second_quad; nodes[c_idx].end = boundaries.third_quad;
-            nodes[c_idx].x_mid = nodes[p_idx].x_mid + shift; nodes[c_idx].y_mid = nodes[p_idx].y_mid - shift;
-            nodes[c_idx].z_mid = nodes[c_idx].x_mid + nodes[c_idx].y_mid*I;
-            c_idx++;
-
-            nodes[c_idx].level = level+1;
-            nodes[c_idx].start = boundaries.third_quad; nodes[c_idx].end = boundaries.end;
-            nodes[c_idx].x_mid = nodes[p_idx].x_mid + shift; nodes[c_idx].y_mid = nodes[p_idx].y_mid + shift;
-            nodes[c_idx].z_mid = nodes[c_idx].x_mid + nodes[c_idx].y_mid*I;
-            //c_idx++; not used
+            for (int q = 0; q < 4; q++) {
+                nodes[c_idx + q].level = level+1;
+                nodes[c_idx + q].start = partitions.quadrant_bounds[q][0];
+                nodes[c_idx + q].end = partitions.quadrant_bounds[q][1];
+                nodes[c_idx + q].x_mid = nodes[p_idx].x_mid + x_mid_shifts[q];
+                nodes[c_idx + q].y_mid = nodes[p_idx].y_mid + y_mid_shifts[q];
+                nodes[c_idx + q].z_mid = nodes[c_idx + q].x_mid + nodes[c_idx + q].y_mid*I;
+            }
 
             p_idx++;
         }
 
-        //start_idx = (start_idx+1)*4;
         num_boxes = num_boxes*4;
     }
-    //printf("node %d after calling construct_tree: r %f, i %f\n", 82, creal(nodes[82].expansions[1]), cimag(nodes[82].expansions[1]));
 
     free(root);
     return 0;
@@ -305,13 +310,18 @@ int main(int argc, char * argv[])
 
     // read input particle data from file
     Particle *particles = (Particle *)malloc(num_particles * sizeof(Particle));
-    //Particle *particles = (Particle *)calloc(num_particles, sizeof(Particle));
+    if (particles == NULL) {
+        fprintf(stderr, "Error allocating memory for particles\n");
+        return 1;
+    }
+
     FILE *fp = fopen(input_file, "r");
     if (fp == NULL) {
         fprintf(stderr, "Error opening input file: %s\n", input_file);
         free(particles);
         return 1;
     }
+
     for (int i = 0; i < num_particles; i++) {
         float x, y;
         int q;
@@ -328,10 +338,9 @@ int main(int argc, char * argv[])
     }
     fclose(fp);
 
-    // allocate memory for tree structure
-    // num_nodes = \sum_{l=0}^{num_levels} 4^l
-    int num_nodes = 0; // total nodes
-    for (int k = 1; k <= num_levels; k++) {num_nodes = num_nodes + pow(4,k);}
+    // allocate memory for tree structure: \sum_{l=0}^{num_levels} 4^l
+    int num_nodes = 0;
+    for (int k = 1; k <= num_levels; k++) { num_nodes = num_nodes + pow(4,k); }
 
     Node *nodes = (Node *)malloc(num_nodes * (sizeof(Node) + 2*P*sizeof(float complex)));
     if (nodes == NULL) {
