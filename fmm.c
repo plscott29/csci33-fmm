@@ -33,8 +33,8 @@ typedef struct {
     - parent_idx: given a child node index, returns the index of the parent node in the quadtree
     - choose: computes the binomial coefficient "n choose k"
 */
-int child_idx(int parent_idx) { return (parent_idx+1)*4; }
-int parent_idx(int child_idx) { return child_idx/4-1; }
+int child_idx(int parent_idx) { return (parent_idx * 4) + 1; }
+int parent_idx(int child_idx) { return (child_idx - 1) / 4; }
 
 int choose(int n, int k) {
     int c = 1;
@@ -152,45 +152,21 @@ Partition four_sort(Particle *particles, Node *node) {
 int construct_tree(Particle *particles, Node *nodes, int num_particles, int num_levels)
 {
     // initialize root node
-    Node *root = malloc(sizeof(Node));
-    if (root == NULL) {
-        return -1;
-    }
-
-    // root->idx = -1; 
+    Node *root = &nodes[0];                 // TODO: optimize by not storing root?
     root->level = 0;
     root->start = 0; root->end = num_particles-1;
-    
-    // TODO: parameterize bounding box?
-    root->x_mid = 0.5; root->y_mid = 0.5; 
+    root->x_mid = 0.5; root->y_mid = 0.5;   // TODO: parameterize bounding box?
     root->z_mid = 0.5 + 0.5*I;
-
-    // sort particles into four quadrants at the root
-    Partition partitions = four_sort(particles, root);
-    
-    // quadrant ordering: SW, NW, SE, NE
-    float x_mids[4] = {0.25, 0.25, 0.75, 0.75};
-    float y_mids[4] = {0.25, 0.75, 0.25, 0.75};
-
-    // create first level of child nodes
-    for (int i=0; i < 4; i++) {
-        nodes[i].level = 1;
-        nodes[i].start = partitions.quadrant_bounds[i][0];
-        nodes[i].end = partitions.quadrant_bounds[i][1];
-        nodes[i].x_mid = x_mids[i];
-        nodes[i].y_mid = y_mids[i];
-        nodes[i].z_mid = nodes[i].x_mid + nodes[i].y_mid*I;
-    }
 
     // set the rest of the levels
     int p_idx = 0;
     int c_idx;
-    int num_boxes = 4;
+    int num_boxes = 1;     // 'num_boxes' is number of parent boxes
 
-    for (int level = 1; level < num_levels; level++) {  // 'level' refers to level of parent
-        for (int i = 0; i < num_boxes; i++) {           // 'num_boxes' is number of parent boxes
+    for (int level = 0; level < num_levels; level++) {  // 'level' refers to level of parent node(s)
+        for (int i = 0; i < num_boxes; i++) {
             // sort particles and get the partitions of subarray of particles for this parent node
-            partitions = four_sort(particles, &nodes[p_idx]);
+            Partition partitions = four_sort(particles, &nodes[p_idx]);
 
             // set four nodes corresponding to the four quadrants of this parent node
             c_idx = child_idx(p_idx);
@@ -218,7 +194,6 @@ int construct_tree(Particle *particles, Node *nodes, int num_particles, int num_
         num_boxes = num_boxes*4;
     }
 
-    free(root);
     return 0;
 }
 
@@ -264,19 +239,15 @@ void ofo(Node *nodes, int p_idx, int P, int *binom) {
     }
 }
 
-int calculate_multipole(Particle *particles, Node *nodes, int num_particles, int num_levels, int P) {
-    int num_nodes = 0; // total nodes
-    for (int k = 1; k <= num_levels; k++) {num_nodes = num_nodes + pow(4,k);}
+int calculate_multipole(Particle *particles, Node *nodes, int num_particles, int num_levels, int num_nodes, int P) {
+    // compute multipole expansions for all leaf nodes: "outgoing from sources"
     int num_leaves = pow(4, num_levels);
-    for (int i = num_nodes-1; num_nodes-num_leaves-1 <= i; i--) {
-        //printf("node number: %d\n", i);
-        //printf("node %d before: r %f, i %f\n", i, creal(nodes[i].expansions[1]), cimag(nodes[i].expansions[1]));
-        //printf("next node (%d) before: r %f, i %f\n", i-1, creal(nodes[i-1].expansions[1]), cimag(nodes[i-1].expansions[1]));
-        ofs(particles, &nodes[i], P);
-        //printf("node %d after: r %f, i %f\n\n", i, creal(nodes[i].expansions[1]), cimag(nodes[i].expansions[1]));
+    for (int i = 0; i < num_leaves; i++) {
+        int leaf_idx = num_nodes - num_leaves + i;
+        ofs(particles, &nodes[leaf_idx], P);
     }
 
-    //precalculate binomial coefs
+    // pre-calculate binomial coefs
     int *binom = (int*)malloc(P*P*sizeof(int));
     for (int i = 1; i <= P; i++) {
         for (int j=1;j <= i; j++) {
@@ -352,7 +323,7 @@ int main(int argc, char * argv[])
 
     // allocate memory for tree structure: \sum_{l=0}^{num_levels} 4^l
     int num_nodes = 0;
-    for (int k = 1; k <= num_levels; k++) { num_nodes = num_nodes + pow(4,k); }
+    for (int k = 0; k <= num_levels; k++) { num_nodes = num_nodes + pow(4,k); }
 
     Node *nodes = (Node *)malloc(num_nodes * (sizeof(Node) + 2*P*sizeof(float complex)));
     if (nodes == NULL) {
@@ -370,7 +341,7 @@ int main(int argc, char * argv[])
     }
 
     // run step 2: calculate multipole expansions
-    if (calculate_multipole(particles, nodes, num_particles, num_levels, P) != 0) {
+    if (calculate_multipole(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
         fprintf(stderr, "Error calculating multipole expansions\n");
         free(particles);
         free(nodes);
