@@ -222,18 +222,30 @@ int construct_tree(Particle *particles, Node *nodes, int num_particles, int num_
     return 0;
 }
 
+/*
+    input:
+        - particles: array of Particle structs containing the particle positions and charges
+        - node: pointer to the Node for which the multipole expansion is being computed
+        - P: number of terms in the multipole expansion
+    output:
+        - node->expansions: array of complex numbers of length P in which the computed
+          multipole expansion coefficients for this node are stored
+
+    Compute "outgoing from source" expansions for all leaf nodes in the tree.
+    For each particle in the node's particle range [node->start, node->end], compute
+    the contribution of that particle to the multipole expansion around the node's center
+    'z_mid' and accumulate it into node->expansions according to:
+        M_0 = M_0 + q_j
+        M_p = M_p - q_j/p * (z_j - node->z_mid)^p for p = 1, ..., P-1
+    where z_j is the particle position and q_j is the particle charge.
+*/
 void ofs(Particle *particles, Node *node, int P) {
-    for (int  j = node->start; j < node->end; j++) {
-        //printf("Charge number = %d\n", j);
-        node->expansions[0] = node->expansions[0] + particles[j].q*1.0;
+    for (int j = node->start; j <= node->end; j++) {
+        node->expansions[0] = node->expansions[0] + (float) particles[j].q;
+
         float complex offset = particles[j].z - node->z_mid;
-        //printf("particles[j].z r %f, i %f\n", creal(particles[j].z), cimag(particles[j].z));
-        //printf("node->z_mid r %f, i %f\n", creal(node->z_mid), cimag(node->z_mid));
-        //printf("offset r %f, i %f\n", creal(offset), cimag(offset));
-        for (int k=1; k < P; k++) {
-            //printf("Multipole expansion k = %d, real %f imag %f\n",
-            //    k, creal(cpow(offset, k)*particles[j].q/k), cimag(cpow(offset, k)*particles[j].q/k));
-            node->expansions[k] = node->expansions[k] - cpow(offset, k)*particles[j].q/k;
+        for (int p = 1; p < P; p++) {
+            node->expansions[p] = node->expansions[p] - cpow(offset, p) * (float) particles[j].q / (float) p;
         }
     }
 }
