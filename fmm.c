@@ -266,6 +266,82 @@ void ofo(Node *nodes, int node_idx, int P, int *binom) {
     }
 }
 
+/*
+    input:
+        - nodes: tree of Nodes representing FMM hiearchical decomposition
+        - node_idx: index of node in nodes array for which multipole expansion is being computed
+        - P: number of terms in multipole expansion
+        - binom: precomputed array of binomial coefficients (of size P*P)
+    output:
+        - nodes[node_idx].expansions: incoming expansion coefficients for this node are updated
+    
+    Compute the incoming expansions for this node according to:
+        u_\sigma = T^ifi_\sigma,\tau u_\tau + \sum_{c in interaction list} T^ifo_\sigma,c q_c
+    representing the incoming expansions from the parent node u_\tau via the translation operator T^ifi_\sigma,\tau
+    plus the contributions from the outgoing expansions of all nodes in the interaction list of this node
+    via the translation operator T^ifo_\sigma,c applied to the outgoing expansions q_c of the nodes in the
+    interaction list.
+*/
+void incoming_expansion(Node *nodes, int node_idx, int P, int *binom) {
+    float complex incoming_expansions[] = nodes[node_idx].expansions[P];
+    
+    /* compute "incoming from incoming" expansion: incoming expansions from parent node via
+     * the translation operator T^ifi_\sigma,\tau (upper triangular)
+     */
+    int p_idx = parent_idx(node_idx);
+    float complex offset =  nodes[node_idx].z_mid - nodes[p_idx].z_mid; // child - parent
+
+    // iterate from highest degree of incoming expansion down to lowest degree
+    for (int r = P; r > 0; r--) {
+        // accumulate powers of offset for use in binomial expansion
+        float complex offset_power_acc = 1;
+
+        // iterate backwards to fill in multipole expansions from low degree to high degree
+        for (int p = r; p <= P; p++) {
+            // accumulate contribution of child multipole expansion to parent
+            int p_choose_r = binom[(p-1)*P + (r-1)];
+            incoming_expansions[r-1] += p_choose_r * offset_power_acc * nodes[p_idx].expansions[p-1];
+            offset_power_acc *= offset;
+        }
+    }
+
+    /* compute "incoming from outgoing" expansion: incoming expansions from the outgoing expansions
+     * of all nodes in the interaction list of this node via the translation operator T^ifo_\sigma,c
+     * applied to the outgoing expansions q_c of the nodes in the interaction list
+     */
+    int interaction_list[] = {0};  // TODO: construct interaction list for each node
+    for (int i = 0; i < size(interaction_list); i++) {
+        int c_idx = interaction_list[i];
+        float complex offset = nodes[node_idx].z_mid - nodes[c_idx].z_mid;          // current - interaction list node
+        float complex reverse_offset = nodes[c_idx].z_mid - nodes[node_idx].z_mid;  // interaction list node - current
+
+        // r = 0 case
+        incoming_expansions[0] += nodes[c_idx].expansions[0] * clog(offset);
+        float complex offset_power_acc = -1*reverse_offset; // (c_sigma - c_tau)^p starting at p=1
+        for (int p = 1; p < P; p++) {
+            incoming_expansions[0] += nodes[c_idx].expansions[p] / offset_power_acc;
+            offset_power_acc *= -1*reverse_offset; // (c_sigma - c_tau)^p
+        }
+
+        // r > 0 case
+        offset_power_acc = reverse_offset; // (c_sigma - c_tau)^r starting at r=1
+        for (int r = 1; r < P; r++) {
+            incoming_expansions[r] -= nodes[c_idx].expansions[0] / (r * offset_power_acc);
+
+            float complex offset_power_acc_inner = offset_power_acc; // (c_sigma - c_tau)^r+p starting at (c_sigma - c_tau)^r
+            for (int p = 1; p < P; p++) {
+                offset_power_acc_inner *= -1*reverse_offset; // (c_sigma - c_tau)^(r+p)
+
+                // (r + p - 1) choose (p - 1)
+                int binom_factor = binom[((r+p-1)-1)*P + (p-1)-1];
+                incoming_expansions[r] += nodes[c_idx].expansions[p] * binom_factor / offset_power_acc_inner;
+            }
+
+            offset_power_acc *= reverse_offset; // (c_sigma - c_tau)^r
+        }
+    }
+}
+
 int calculate_multipole(Particle *particles, Node *nodes, int num_particles, int num_levels, int num_nodes, int P) {
     /* 
      * Upwards pass: compute outgoing expansion of each box from leaf nodes up to the root. 
@@ -292,6 +368,29 @@ int calculate_multipole(Particle *particles, Node *nodes, int num_particles, int
     // iterate over all non-leaf nodes in reverse order (from bottom of tree up to root)
     for (int i = (num_nodes - num_leaves) - 1; i > 0; i--) {
         ofo(nodes, i, P, binom);
+    }
+
+    /*
+     * Downwards pass: compute incoming expansion for every node in a pass over all nodes,
+     * going from larger->smaller. For each node, combine the incoming expansion of its parent
+     * with the contributions from the outgoing expansions of all boxes in its interaction list.
+    */
+
+    // set incoming expansion of root & level 1 nodes to zero
+    for (int i = 0; i < (1 + 4); i++) { // root node + 4 level 1 nodes
+        for (int p = 0; p < P; p++) {
+            memset(&nodes[i].expansions[P], 0, P*sizeof(float complex));
+        }
+    }
+
+    // iterate from level l=2 to leaf nodes, setting incoming expansions
+    for (int l = 2; l <= num_levels; l++) {
+        int nodes_in_level = pow(4, l);
+        int level_start_idx = (pow(4, l) - 1) / 3;
+        for (int i = 0; i < nodes_in_level; i++) {
+            int node_idx = level_start_idx + i;
+            incoming_expansion(nodes, node_idx, P, binom);
+        }
     }
 
     free(binom);
