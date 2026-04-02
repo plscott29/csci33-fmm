@@ -256,14 +256,12 @@ void ofo(Node *nodes, int node_idx, int P, int *binom) {
             float complex offset_power_acc = 1;
 
             // iterate backwards to fill in multipole expansions from low degree to high degree
-            for (int s = r; s >= 0; s--) {
+            for (int s = r; s > 0; s--) {
                 // accumulate contribution of child multipole expansion to parent
                 int r_choose_s = binom[(r-1)*P + (s-1)];
                 nodes[node_idx].expansions[r-1] += r_choose_s * offset_power_acc * nodes[c_idx+i].expansions[s-1];
                 offset_power_acc *= offset;
             }
-
-            // TODO: how do we handle the case s=0? will produce an indexing error at the moment
         }
     }
 }
