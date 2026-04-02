@@ -300,7 +300,7 @@ void incoming_expansion(Node *nodes, int node_idx, int P, int *binom) {
         for (int p = r; p <= P; p++) {
             // accumulate contribution of child multipole expansion to parent
             int p_choose_r = binom[(p-1)*P + (r-1)];
-            incoming_expansions[r-1] += p_choose_r * offset_power_acc * nodes[p_idx].expansions[p-1];
+            incoming_expansions[r-1] += p_choose_r * offset_power_acc * nodes[p_idx].expansions[P+(p-1)];
             offset_power_acc *= offset;
         }
     }
@@ -333,7 +333,7 @@ void incoming_expansion(Node *nodes, int node_idx, int P, int *binom) {
                 offset_power_acc_inner *= -1*reverse_offset; // (c_sigma - c_tau)^(r+p)
 
                 // (r + p - 1) choose (p - 1)
-                int binom_factor = binom[((r+p-1)-1)*P + (p-1)-1];
+                int binom_factor = binom[((r+p-1)-1)*P + (p-1)-1]; //outside bounds of current matrix  TODO
                 incoming_expansions[r] += nodes[c_idx].expansions[p] * binom_factor / offset_power_acc_inner;
             }
 
@@ -359,7 +359,7 @@ int calculate_multipole(Particle *particles, Node *nodes, int num_particles, int
     // pre-compute binomial co-efficients
     int *binom = (int*)malloc(P*P*sizeof(int));
     for (int r = 1; r <= P; r++) {
-        for (int s = 1; s <= r; s++) {
+        for (int s = 1; s <= P; s++) {
             binom[P*(r-1)+(s-1)] = choose(r,s);
         }
     }
