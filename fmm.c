@@ -1,8 +1,9 @@
+#include <complex.h>
+#include <math.h>
 #include <omp.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <math.h>
-#include <complex.h>
+#include <string.h>
 
 /* Define structs: Particle, Node, Partition */
 typedef struct {
@@ -20,7 +21,7 @@ typedef struct {
     float x_mid;
     float y_mid;
     float complex z_mid;
-    float complex expansions[]; // to store local & multipole expansions, size determined by 2p
+    float complex *expansions; // to store local & multipole expansions, size determined by 2p
 } Node;
 
 typedef struct {
@@ -269,25 +270,25 @@ void ofo(Node *nodes, int node_idx, int P, int *binom) {
 /*
     input:
         - nodes: tree of Nodes representing FMM hiearchical decomposition
-        - node_idx: index of node in nodes array for which multipole expansion is being computed
+        - node_idx: index of node in nodes array for which incoming-from-incoming
+          multipole expansion is being computed
         - P: number of terms in multipole expansion
         - binom: precomputed array of binomial coefficients (of size P*P)
     output:
-        - nodes[node_idx].expansions: incoming expansion coefficients for this node are updated
-    
-    Compute the incoming expansions for this node according to:
-        u_\sigma = T^ifi_\sigma,\tau u_\tau + \sum_{c in interaction list} T^ifo_\sigma,c q_c
-    representing the incoming expansions from the parent node u_\tau via the translation operator T^ifi_\sigma,\tau
-    plus the contributions from the outgoing expansions of all nodes in the interaction list of this node
-    via the translation operator T^ifo_\sigma,c applied to the outgoing expansions q_c of the nodes in the
-    interaction list.
+        - nodes[node_idx].expansions[P..2*P-1]: incoming expansion coefficients for this node
+          are updated in place using incoming expansions from the parent node
+
+    Compute "incoming from incoming" expansion for this node by translating the incoming
+    expansions from the parent node according to:
+        u_\sigma += T^ifi_\sigma,\tau u_\tau
+    where u_\sigma are the incoming expansion coefficients for this node, u_\tau are the incoming
+    expansion coefficients of the parent node, and T^ifi_\sigma,\tau is the upper-triangular
+    translation operator that maps incoming expansions from the parent to the child node.
+
 */
-void incoming_expansion(Node *nodes, int node_idx, int P, int *binom) {
-    float complex incoming_expansions[] = nodes[node_idx].expansions[P];
-    
-    /* compute "incoming from incoming" expansion: incoming expansions from parent node via
-     * the translation operator T^ifi_\sigma,\tau (upper triangular)
-     */
+void ifi(Node *nodes, int node_idx, int P, int *binom) {
+    float complex *incoming_expansions = &nodes[node_idx].expansions[P];
+
     int p_idx = parent_idx(node_idx);
     float complex offset =  nodes[node_idx].z_mid - nodes[p_idx].z_mid; // child - parent
 
@@ -304,13 +305,32 @@ void incoming_expansion(Node *nodes, int node_idx, int P, int *binom) {
             offset_power_acc *= offset;
         }
     }
+}
 
-    /* compute "incoming from outgoing" expansion: incoming expansions from the outgoing expansions
-     * of all nodes in the interaction list of this node via the translation operator T^ifo_\sigma,c
-     * applied to the outgoing expansions q_c of the nodes in the interaction list
-     */
-    int interaction_list[] = {0};  // TODO: construct interaction list for each node
-    for (int i = 0; i < size(interaction_list); i++) {
+/*
+    input:
+        - nodes: tree of Nodes representing FMM hiearchical decomposition
+        - node_idx: index of node in nodes array for which incoming-from-outgoing
+          multipole expansion is being computed
+        - P: number of terms in multipole expansion
+        - binom: precomputed array of binomial coefficients (of size P*P)
+    output:
+        - nodes[node_idx].expansions[P..2*P-1]: incoming expansion coefficients for this node
+          are updated in place using outgoing expansions from nodes in the interaction list
+    
+    Compute "incoming from outgoing" expansion for this node from nodes in the interation list
+    according to:
+        u_\sigma += \sum_{c in interaction list} T^ifo_\sigma,c q_c
+    where u_\sigma are the incoming expansions for this node, q_c are outgoing
+    expansion coefficients of nodes in the interaction list of this node, and T^ifo_\sigma,c
+    is the translation operator that maps outgoing expansions of the interaction list nodes
+    to incoming expansions at this node
+*/
+void ifo(Node *nodes, int node_idx, int P) {
+    float complex *incoming_expansions = &nodes[node_idx].expansions[P];
+
+    int interaction_list[] = {0};       // TODO: construct interaction list for each node
+    for (int i = 0; i < -1; i++) {      // TODO: currently set so iteration doesn't occur
         int c_idx = interaction_list[i];
         float complex offset = nodes[node_idx].z_mid - nodes[c_idx].z_mid;          // current - interaction list node
         float complex reverse_offset = nodes[c_idx].z_mid - nodes[node_idx].z_mid;  // interaction list node - current
@@ -332,8 +352,7 @@ void incoming_expansion(Node *nodes, int node_idx, int P, int *binom) {
             for (int p = 1; p < P; p++) {
                 offset_power_acc_inner *= -1*reverse_offset; // (c_sigma - c_tau)^(r+p)
 
-                // (r + p - 1) choose (p - 1)
-                int binom_factor = binom[((r+p-1)-1)*P + (p-1)-1]; //outside bounds of current matrix  TODO
+                int binom_factor = choose(r+p-1, p-1);  // (r + p - 1) choose (p - 1)
                 incoming_expansions[r] += nodes[c_idx].expansions[p] * binom_factor / offset_power_acc_inner;
             }
 
@@ -370,6 +389,11 @@ int calculate_multipole(Particle *particles, Node *nodes, int num_particles, int
         ofo(nodes, i, P, binom);
     }
 
+    free(binom);
+    return 0;
+}
+
+int calculate_local(Particle *particles, Node *nodes, int num_particles, int num_levels, int num_nodes, int P) {
     /*
      * Downwards pass: compute incoming expansion for every node in a pass over all nodes,
      * going from larger->smaller. For each node, combine the incoming expansion of its parent
@@ -383,13 +407,22 @@ int calculate_multipole(Particle *particles, Node *nodes, int num_particles, int
         }
     }
 
+    // pre-compute binomial co-efficients
+    int *binom = (int*)malloc(P*P*sizeof(int));
+    for (int r = 1; r <= P; r++) {
+        for (int s = 1; s <= P; s++) {
+            binom[P*(r-1)+(s-1)] = choose(r,s);
+        }
+    }
+
     // iterate from level l=2 to leaf nodes, setting incoming expansions
     for (int l = 2; l <= num_levels; l++) {
         int nodes_in_level = pow(4, l);
         int level_start_idx = (pow(4, l) - 1) / 3;
         for (int i = 0; i < nodes_in_level; i++) {
             int node_idx = level_start_idx + i;
-            incoming_expansion(nodes, node_idx, P, binom);
+            ifi(nodes, node_idx, P, binom);
+            ifo(nodes, node_idx, P);
         }
     }
 
@@ -455,30 +488,64 @@ int main(int argc, char * argv[])
     int num_nodes = 0;
     for (int k = 0; k <= num_levels; k++) { num_nodes = num_nodes + pow(4,k); }
 
-    Node *nodes = (Node *)malloc(num_nodes * (sizeof(Node) + 2*P*sizeof(float complex)));
+    Node *nodes = (Node *)malloc(num_nodes * (sizeof(Node)));
     if (nodes == NULL) {
         fprintf(stderr, "Error allocating memory for tree nodes\n");
         free(particles);
         return 1;
+    }
+    for (int i=0; i < num_nodes; i++) {
+        nodes[i].expansions = (float complex *) calloc(2 * P, sizeof(float complex));
+        if (nodes[i].expansions == NULL) {
+            fprintf(stderr, "Error allocating memory for expansions of node %d\n", i);
+            for (int j = 0; j < i; j++) {
+                free(nodes[j].expansions);
+            }
+            free(nodes);
+            free(particles);
+            return 1;
+        }
     }
 
     // run step 1: tree construction & sorting
     if (construct_tree(particles, nodes, num_particles, num_levels) != 0) {
         fprintf(stderr, "Error constructing tree\n");
         free(particles);
+        for (int i = 0; i < num_nodes; i++) {
+            free(nodes[i].expansions);
+        }
         free(nodes);
         return 1;
     }
 
-    // run step 2: calculate multipole expansions
+    // run step 2: calculate multipole expansions (upwards pass)
     if (calculate_multipole(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
         fprintf(stderr, "Error calculating multipole expansions\n");
         free(particles);
+        for (int i = 0; i < num_nodes; i++) {
+            free(nodes[i].expansions);
+        }
+        free(nodes);
+        return 1;
+    }
+
+    // run step 3: calculate local expansions (downwards pass)
+    if (calculate_local(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
+        fprintf(stderr, "Error calculating local expansions\n");
+        free(particles);
+        for (int i = 0; i < num_nodes; i++) {
+            free(nodes[i].expansions);
+        }
         free(nodes);
         return 1;
     }
 
     printf("Node idx: %d, mpole expansion 1: %f, %f\n", 83, creal(nodes[83].expansions[1]), cimag(nodes[83].expansions[1]));
 
+    free(particles);
+    for (int i = 0; i < num_nodes; i++) {
+        free(nodes[i].expansions);
+    }
+    free(nodes);
     return 0;
 }
