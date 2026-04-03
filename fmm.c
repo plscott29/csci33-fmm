@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdbool.h>
 
 /* Define structs: Particle, Node, Partition */
 typedef struct {
@@ -28,6 +29,14 @@ typedef struct {
     int quadrant_bounds[4][2];  // Quadrant ordering: SW/NW/SE/NE
 } Partition;
 
+typedef struct {
+    int nodes[3][3];
+} Neighborhood;
+
+typedef struct {
+    int nodes[27];
+} WellSeparated;
+
 
 /* Helper functions:
     - child_idx: given a parent node index, returns the index of the first child in the quadtree
@@ -36,6 +45,11 @@ typedef struct {
 */
 int child_idx(int parent_idx) { return (parent_idx * 4) + 1; }
 int parent_idx(int child_idx) { return (child_idx - 1) / 4; }
+int level_start_idx(int level) {
+    int idx = 0;
+    for (int k = 0; k < level; k++) { idx = idx + pow(4,k); }
+    return idx;
+}
 
 int choose(int n, int k) {
     int c = 1;
@@ -307,6 +321,83 @@ void ifi(Node *nodes, int node_idx, int P, int *binom) {
     }
 }
 
+int search_for_neighbor(Node *nodes, int node_idx, char direction, float distance) {
+    int idx_lower_bound = level_start_idx(nodes[node_idx].level);
+    int idx_upper_bound = level_start_idx(nodes[node_idx].level+1)-1;
+
+    float test_y_dist;
+    float test_x_dist;
+    bool aligned = 0;
+    float ratio;
+    int iteration = 0;
+    int jump_idx;
+    int test_idx = node_idx;
+
+    switch (direction) {
+        case 'n':
+            while (test_idx <= idx_upper_bound) {
+                jump_idx = pow(4, iteration)-level_start_idx(iteration); // +4-1=3, +16-4-1=11, +64-16-4-1=43, etc.
+                test_idx = node_idx + jump_idx; // we want to see if this node is the north neighbor
+                printf("node %d, jump %d, test %d\n", node_idx, jump_idx, test_idx);
+                test_y_dist = cimag(nodes[test_idx].z_mid - nodes[node_idx].z_mid); printf("test distance: %f\n", test_y_dist);
+                ratio = test_y_dist/distance; printf("ratio: %f\n", ratio);
+
+                aligned = creal(nodes[test_idx].z_mid) == creal(nodes[node_idx].z_mid); printf("aligned: %d\n", aligned);
+
+                if (0.8 < ratio && ratio < 1.2 && aligned) {
+                    return test_idx;
+                }
+                iteration++;
+            }
+            break;
+
+        case 's':
+            while (test_idx >= idx_lower_bound) {
+                jump_idx = pow(4, iteration)-level_start_idx(iteration);
+                test_idx = node_idx - jump_idx;
+                test_y_dist = cimag(nodes[node_idx].z_mid - nodes[test_idx].z_mid);
+                ratio = test_y_dist/distance;
+                aligned = creal(nodes[test_idx].z_mid) == creal(nodes[node_idx].z_mid);
+                if (0.95 < ratio && ratio < 1.05 && aligned) {
+                    return test_idx;
+                }
+                iteration++;
+            }
+            break;
+
+        case 'e':
+            while (test_idx <= idx_upper_bound) {
+                jump_idx = 2*(pow(4, iteration)-level_start_idx(iteration));
+                test_idx = node_idx + jump_idx;
+                test_x_dist = creal(nodes[test_idx].z_mid - nodes[node_idx].z_mid);
+                ratio = test_x_dist/distance;
+                aligned = cimag(nodes[test_idx].z_mid) == cimag(nodes[node_idx].z_mid);
+                if (0.8 < ratio && ratio < 1.2 && aligned) {
+                    return test_idx;
+                }
+                iteration++;
+            }
+            break;
+
+        case 'w':
+            while (test_idx >= idx_lower_bound) {
+                jump_idx = 2*(pow(4, iteration)-level_start_idx(iteration));
+                test_idx = node_idx - jump_idx;
+                //printf("node %d, jump %d, test %d\n", node_idx, jump_idx, test_idx);
+                test_x_dist = creal(nodes[node_idx].z_mid - nodes[test_idx].z_mid);
+                ratio = test_x_dist/distance;
+                aligned = cimag(nodes[test_idx].z_mid) == cimag(nodes[node_idx].z_mid);
+                if (0.95 < ratio && ratio < 1.05 && aligned) {
+                    return test_idx;
+                }
+                iteration++;
+            }
+            break;
+    }
+
+    return -1;
+}
+
 /*
     input:
         - nodes: tree of Nodes representing FMM hiearchical decomposition
@@ -468,6 +559,7 @@ int main(int argc, char * argv[])
         return 1;
     }
 
+    // read file + populate particles
     for (int i = 0; i < num_particles; i++) {
         float x, y;
         int q;
@@ -485,9 +577,9 @@ int main(int argc, char * argv[])
     fclose(fp);
 
     // allocate memory for tree structure: \sum_{l=0}^{num_levels} 4^l
-    int num_nodes = 0;
-    for (int k = 0; k <= num_levels; k++) { num_nodes = num_nodes + pow(4,k); }
+    int num_nodes = level_start_idx(num_levels+1);
 
+    // allocate space for nodes
     Node *nodes = (Node *)malloc(num_nodes * (sizeof(Node)));
     if (nodes == NULL) {
         fprintf(stderr, "Error allocating memory for tree nodes\n");
@@ -539,8 +631,6 @@ int main(int argc, char * argv[])
         free(nodes);
         return 1;
     }
-
-    printf("Node idx: %d, mpole expansion 1: %f, %f\n", 83, creal(nodes[83].expansions[1]), cimag(nodes[83].expansions[1]));
 
     free(particles);
     for (int i = 0; i < num_nodes; i++) {
