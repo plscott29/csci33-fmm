@@ -338,15 +338,10 @@ int search_for_neighbor(Node *nodes, int node_idx, char direction, float distanc
             while (test_idx <= idx_upper_bound) {
                 jump_idx = pow(4, iteration)-level_start_idx(iteration); // +4-1=3, +16-4-1=11, +64-16-4-1=43, etc.
                 test_idx = node_idx + jump_idx; // we want to see if this node is the north neighbor
-                printf("node %d, jump %d, test %d\n", node_idx, jump_idx, test_idx);
-                test_y_dist = cimag(nodes[test_idx].z_mid - nodes[node_idx].z_mid); printf("test distance: %f\n", test_y_dist);
-                ratio = test_y_dist/distance; printf("ratio: %f\n", ratio);
-
-                aligned = creal(nodes[test_idx].z_mid) == creal(nodes[node_idx].z_mid); printf("aligned: %d\n", aligned);
-
-                if (0.8 < ratio && ratio < 1.2 && aligned) {
-                    return test_idx;
-                }
+                test_y_dist = cimag(nodes[test_idx].z_mid - nodes[node_idx].z_mid);
+                ratio = test_y_dist/distance;
+                aligned = creal(nodes[test_idx].z_mid) == creal(nodes[node_idx].z_mid);
+                if (0.8 < ratio && ratio < 1.2 && aligned) {return test_idx;}
                 iteration++;
             }
             break;
@@ -358,9 +353,7 @@ int search_for_neighbor(Node *nodes, int node_idx, char direction, float distanc
                 test_y_dist = cimag(nodes[node_idx].z_mid - nodes[test_idx].z_mid);
                 ratio = test_y_dist/distance;
                 aligned = creal(nodes[test_idx].z_mid) == creal(nodes[node_idx].z_mid);
-                if (0.95 < ratio && ratio < 1.05 && aligned) {
-                    return test_idx;
-                }
+                if (0.95 < ratio && ratio < 1.05 && aligned) {return test_idx;}
                 iteration++;
             }
             break;
@@ -372,9 +365,7 @@ int search_for_neighbor(Node *nodes, int node_idx, char direction, float distanc
                 test_x_dist = creal(nodes[test_idx].z_mid - nodes[node_idx].z_mid);
                 ratio = test_x_dist/distance;
                 aligned = cimag(nodes[test_idx].z_mid) == cimag(nodes[node_idx].z_mid);
-                if (0.8 < ratio && ratio < 1.2 && aligned) {
-                    return test_idx;
-                }
+                if (0.8 < ratio && ratio < 1.2 && aligned) {return test_idx;}
                 iteration++;
             }
             break;
@@ -383,19 +374,81 @@ int search_for_neighbor(Node *nodes, int node_idx, char direction, float distanc
             while (test_idx >= idx_lower_bound) {
                 jump_idx = 2*(pow(4, iteration)-level_start_idx(iteration));
                 test_idx = node_idx - jump_idx;
-                //printf("node %d, jump %d, test %d\n", node_idx, jump_idx, test_idx);
                 test_x_dist = creal(nodes[node_idx].z_mid - nodes[test_idx].z_mid);
                 ratio = test_x_dist/distance;
                 aligned = cimag(nodes[test_idx].z_mid) == cimag(nodes[node_idx].z_mid);
-                if (0.95 < ratio && ratio < 1.05 && aligned) {
-                    return test_idx;
-                }
+                if (0.95 < ratio && ratio < 1.05 && aligned) {return test_idx;}
                 iteration++;
             }
             break;
     }
-
     return -1;
+}
+
+Neighborhood get_neighborhood(Node *nodes, int node_idx) {
+    int sw_child_idx = child_idx(parent_idx(node_idx));
+    float mid2mid = creal(nodes[sw_child_idx+2].z_mid) - creal(nodes[sw_child_idx].z_mid);
+    int north, south, east, west, ne, se, nw, sw;
+
+    switch (node_idx-sw_child_idx) {
+        case 0: //search for south, west, nw, sw, se
+            north = node_idx+1; east = node_idx+2; ne = node_idx+3;
+            south = search_for_neighbor(nodes, node_idx, 's', mid2mid);
+            west = search_for_neighbor(nodes, node_idx, 'w', mid2mid);
+
+            if (south == -1 && west == -1) {nw = -1; sw = -1; se = -1;}
+            else if (south == -1) {nw = west+1; sw = -1; se = -1;}
+            else if (west == -1) {nw = -1; sw = -1; se = south+2;}
+            else {nw = west+1; sw = search_for_neighbor(nodes, west, 's', mid2mid); se = south+2;}
+            break;
+
+        case 1: //search for north, west, ne, nw, sw
+            south = node_idx-1; east = node_idx+2; se = node_idx+1;
+            north = search_for_neighbor(nodes, node_idx, 'n', mid2mid);
+            west = search_for_neighbor(nodes, node_idx, 'w', mid2mid);
+
+            if (north == -1 && west == -1) {ne = -1; nw = -1; sw = -1;}
+            else if (north == -1) {ne = -1; nw = -1; sw = west-1;}
+            else if (west == -1) {ne = north+2; nw = -1; sw = -1;}
+            else {ne = north+2; nw = search_for_neighbor(nodes, west, 'n', mid2mid); sw = west-1;}
+            break;
+
+        case 2: //search south, east, sw, se, ne
+            north = node_idx+1; west = node_idx-2; nw = node_idx - 1;
+            south = search_for_neighbor(nodes, node_idx, 's', mid2mid);
+            east = search_for_neighbor(nodes, node_idx, 'e', mid2mid);
+
+            if (south == -1 && east == -1) {sw = -1; se = -1; ne = -1;}
+            else if (south == -1) {sw = -1; se = -1; ne = east+1;}
+            else if (east == -1) {sw = south-2; se = -1; ne = -1;}
+            else {sw = south-2; se = search_for_neighbor(nodes, east, 's', mid2mid); ne = east+1;}
+            break;
+
+        case 3: //search north, east, se, ne, nw
+            south = node_idx-1; west = node_idx-2; sw = node_idx-3;
+            north = search_for_neighbor(nodes, node_idx, 'n', mid2mid);
+            east = search_for_neighbor(nodes, node_idx, 'e', mid2mid);
+
+            if (north == -1 && east == -1) {se = -1; ne = -1; nw = -1;}
+            else if (north == -1) {se = east-1; ne = -1; nw = -1;}
+            else if (east == -1) {se = -1; ne = -1; nw = north-2;}
+            else {se = east-1; ne = search_for_neighbor(nodes, east, 'n', mid2mid); nw = north-2;}
+            break;
+
+        default:
+            north = -1; south = -1; east = -1; west = -1;
+            ne = -1; se = -1; nw = -1; sw = -1;
+    }
+    return (Neighborhood) {
+        .nodes = {
+            {nw, north, ne},
+            {west, -1, east},
+            {sw, south, se}}
+    };
+}
+
+WellSeparated get_well_separated(Node *nodes, int node_idx) {
+    Neighborhood parent_neighborhood = get_neighborhood(nodes, parent_idx(node_idx));
 }
 
 /*
