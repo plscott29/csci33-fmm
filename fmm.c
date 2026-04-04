@@ -321,6 +321,7 @@ void ifi(Node *nodes, int node_idx, int P, int *binom) {
     }
 }
 
+// returns the index of the neighbor of the node in the provided direction, -1 if it does not exist
 int search_for_neighbor(Node *nodes, int node_idx, char direction, float distance) {
     int idx_lower_bound = level_start_idx(nodes[node_idx].level);
     int idx_upper_bound = level_start_idx(nodes[node_idx].level+1)-1;
@@ -385,6 +386,7 @@ int search_for_neighbor(Node *nodes, int node_idx, char direction, float distanc
     return -1;
 }
 
+// returns Neighborhood struct with indices of neighboring nodes, -1 index for the node itself and non-existent neighbors
 Neighborhood get_neighborhood(Node *nodes, int node_idx) {
     int sw_child_idx = child_idx(parent_idx(node_idx));
     float mid2mid = creal(nodes[sw_child_idx+2].z_mid) - creal(nodes[sw_child_idx].z_mid);
@@ -447,8 +449,28 @@ Neighborhood get_neighborhood(Node *nodes, int node_idx) {
     };
 }
 
+// returns up to 27 well separated node indices, padded with -1 if there are less than 27 well separated indices
 WellSeparated get_well_separated(Node *nodes, int node_idx) {
     Neighborhood parent_neighborhood = get_neighborhood(nodes, parent_idx(node_idx));
+    WellSeparated *well_separated = malloc(sizeof(WellSeparated));
+    int ws_idx = 0;
+
+    for (int i = 0; i < 3; i++) { for (int j = 0; j < 3; j++) {
+        int c_idx;
+        int p_idx = parent_neighborhood.nodes[i][j];
+        if (p_idx != -1) { // case when
+            c_idx = child_idx(p_idx);
+            for (int k = 0; k < 4; k++) {
+                float distance = cabsf(nodes[node_idx].z_mid - nodes[c_idx].z_mid);
+                float distance_ratio = distance*pow(2.0, nodes[node_idx].level);
+                if (distance_ratio > 1.9) {well_separated->nodes[ws_idx] = c_idx; ws_idx++;}
+                c_idx++;
+            }
+        }
+    }}
+
+    for (int i = ws_idx; i < 27; i++) {well_separated->nodes[i] = -1;}
+    return *well_separated;
 }
 
 /*
