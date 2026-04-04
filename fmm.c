@@ -37,14 +37,23 @@ typedef struct {
     int nodes[27];
 } WellSeparated;
 
+typedef enum {
+    NORTH,
+    SOUTH,
+    EAST,
+    WEST
+} DIRECTION;
+
 
 /* Helper functions:
     - child_idx: given a parent node index, returns the index of the first child in the quadtree
     - parent_idx: given a child node index, returns the index of the parent node in the quadtree
+    - level_start_idx: given a quadtree level, returns the index of the first node at that level
     - choose: computes the binomial coefficient "n choose k"
 */
 int child_idx(int parent_idx) { return (parent_idx * 4) + 1; }
 int parent_idx(int child_idx) { return (child_idx - 1) / 4; }
+
 int level_start_idx(int level) {
     int idx = 0;
     for (int k = 0; k < level; k++) { idx = idx + pow(4,k); }
@@ -150,6 +159,158 @@ Partition four_sort(Particle *particles, Node *node) {
             {right_y_split, node->end}
         }
     };
+}
+
+// returns the index of the neighbor of the node in the provided direction, -1 if it does not exist
+int search_for_neighbor(Node *nodes, int node_idx, DIRECTION direction, float distance) {
+    int idx_lower_bound = level_start_idx(nodes[node_idx].level);
+    int idx_upper_bound = level_start_idx(nodes[node_idx].level+1)-1;
+
+    float test_y_dist;
+    float test_x_dist;
+    bool aligned = 0;
+    float ratio;
+    int iteration = 0;
+    int jump_idx;
+    int test_idx = node_idx;
+
+    switch (direction) {
+        case NORTH:
+            while (test_idx <= idx_upper_bound) {
+                jump_idx = pow(4, iteration)-level_start_idx(iteration); // +4-1=3, +16-4-1=11, +64-16-4-1=43, etc.
+                test_idx = node_idx + jump_idx; // we want to see if this node is the north neighbor
+                test_y_dist = cimag(nodes[test_idx].z_mid - nodes[node_idx].z_mid);
+                ratio = test_y_dist/distance;
+                aligned = creal(nodes[test_idx].z_mid) == creal(nodes[node_idx].z_mid);
+                if (0.8 < ratio && ratio < 1.2 && aligned) {return test_idx;}
+                iteration++;
+            }
+            break;
+
+        case SOUTH:
+            while (test_idx >= idx_lower_bound) {
+                jump_idx = pow(4, iteration)-level_start_idx(iteration);
+                test_idx = node_idx - jump_idx;
+                test_y_dist = cimag(nodes[node_idx].z_mid - nodes[test_idx].z_mid);
+                ratio = test_y_dist/distance;
+                aligned = creal(nodes[test_idx].z_mid) == creal(nodes[node_idx].z_mid);
+                if (0.95 < ratio && ratio < 1.05 && aligned) {return test_idx;}
+                iteration++;
+            }
+            break;
+
+        case EAST:
+            while (test_idx <= idx_upper_bound) {
+                jump_idx = 2*(pow(4, iteration)-level_start_idx(iteration));
+                test_idx = node_idx + jump_idx;
+                test_x_dist = creal(nodes[test_idx].z_mid - nodes[node_idx].z_mid);
+                ratio = test_x_dist/distance;
+                aligned = cimag(nodes[test_idx].z_mid) == cimag(nodes[node_idx].z_mid);
+                if (0.8 < ratio && ratio < 1.2 && aligned) {return test_idx;}
+                iteration++;
+            }
+            break;
+
+        case WEST:
+            while (test_idx >= idx_lower_bound) {
+                jump_idx = 2*(pow(4, iteration)-level_start_idx(iteration));
+                test_idx = node_idx - jump_idx;
+                test_x_dist = creal(nodes[node_idx].z_mid - nodes[test_idx].z_mid);
+                ratio = test_x_dist/distance;
+                aligned = cimag(nodes[test_idx].z_mid) == cimag(nodes[node_idx].z_mid);
+                if (0.95 < ratio && ratio < 1.05 && aligned) {return test_idx;}
+                iteration++;
+            }
+            break;
+    }
+    return -1;
+}
+
+// returns Neighborhood struct with indices of neighboring nodes, -1 index for the node itself and non-existent neighbors
+Neighborhood get_neighborhood(Node *nodes, int node_idx) {
+    int sw_child_idx = child_idx(parent_idx(node_idx));
+    float mid2mid = creal(nodes[sw_child_idx+2].z_mid) - creal(nodes[sw_child_idx].z_mid);
+    int north, south, east, west, ne, se, nw, sw;
+
+    switch (node_idx-sw_child_idx) {
+        case 0: //search for south, west, nw, sw, se
+            north = node_idx+1; east = node_idx+2; ne = node_idx+3;
+            south = search_for_neighbor(nodes, node_idx, SOUTH, mid2mid);
+            west = search_for_neighbor(nodes, node_idx, WEST, mid2mid);
+
+            if (south == -1 && west == -1) {nw = -1; sw = -1; se = -1;}
+            else if (south == -1) {nw = west+1; sw = -1; se = -1;}
+            else if (west == -1) {nw = -1; sw = -1; se = south+2;}
+            else {nw = west+1; sw = search_for_neighbor(nodes, west, SOUTH, mid2mid); se = south+2;}
+            break;
+
+        case 1: //search for north, west, ne, nw, sw
+            south = node_idx-1; east = node_idx+2; se = node_idx+1;
+            north = search_for_neighbor(nodes, node_idx, NORTH, mid2mid);
+            west = search_for_neighbor(nodes, node_idx, WEST, mid2mid);
+
+            if (north == -1 && west == -1) {ne = -1; nw = -1; sw = -1;}
+            else if (north == -1) {ne = -1; nw = -1; sw = west-1;}
+            else if (west == -1) {ne = north+2; nw = -1; sw = -1;}
+            else {ne = north+2; nw = search_for_neighbor(nodes, west, NORTH, mid2mid); sw = west-1;}
+            break;
+
+        case 2: //search south, east, sw, se, ne
+            north = node_idx+1; west = node_idx-2; nw = node_idx - 1;
+            south = search_for_neighbor(nodes, node_idx, SOUTH, mid2mid);
+            east = search_for_neighbor(nodes, node_idx, EAST, mid2mid);
+
+            if (south == -1 && east == -1) {sw = -1; se = -1; ne = -1;}
+            else if (south == -1) {sw = -1; se = -1; ne = east+1;}
+            else if (east == -1) {sw = south-2; se = -1; ne = -1;}
+            else {sw = south-2; se = search_for_neighbor(nodes, east, SOUTH, mid2mid); ne = east+1;}
+            break;
+
+        case 3: //search north, east, se, ne, nw
+            south = node_idx-1; west = node_idx-2; sw = node_idx-3;
+            north = search_for_neighbor(nodes, node_idx, NORTH, mid2mid);
+            east = search_for_neighbor(nodes, node_idx, EAST, mid2mid);
+
+            if (north == -1 && east == -1) {se = -1; ne = -1; nw = -1;}
+            else if (north == -1) {se = east-1; ne = -1; nw = -1;}
+            else if (east == -1) {se = -1; ne = -1; nw = north-2;}
+            else {se = east-1; ne = search_for_neighbor(nodes, east, NORTH, mid2mid); nw = north-2;}
+            break;
+
+        default:
+            north = -1; south = -1; east = -1; west = -1;
+            ne = -1; se = -1; nw = -1; sw = -1;
+    }
+    return (Neighborhood) {
+        .nodes = {
+            {nw, north, ne},
+            {west, -1, east},
+            {sw, south, se}}
+    };
+}
+
+// returns up to 27 well separated node indices, padded with -1 if there are less than 27 well separated indices
+WellSeparated get_well_separated(Node *nodes, int node_idx) {
+    Neighborhood parent_neighborhood = get_neighborhood(nodes, parent_idx(node_idx));
+    WellSeparated *well_separated = malloc(sizeof(WellSeparated));
+    int ws_idx = 0;
+
+    for (int i = 0; i < 3; i++) { for (int j = 0; j < 3; j++) {
+        int c_idx;
+        int p_idx = parent_neighborhood.nodes[i][j];
+        if (p_idx != -1) { // case when
+            c_idx = child_idx(p_idx);
+            for (int k = 0; k < 4; k++) {
+                float distance = cabsf(nodes[node_idx].z_mid - nodes[c_idx].z_mid);
+                float distance_ratio = distance*pow(2.0, nodes[node_idx].level);
+                if (distance_ratio > 1.9) {well_separated->nodes[ws_idx] = c_idx; ws_idx++;}
+                c_idx++;
+            }
+        }
+    }}
+
+    for (int i = ws_idx; i < 27; i++) {well_separated->nodes[i] = -1;}
+    return *well_separated;
 }
 
 /*
@@ -321,158 +482,6 @@ void ifi(Node *nodes, int node_idx, int P, int *binom) {
     }
 }
 
-// returns the index of the neighbor of the node in the provided direction, -1 if it does not exist
-int search_for_neighbor(Node *nodes, int node_idx, char direction, float distance) {
-    int idx_lower_bound = level_start_idx(nodes[node_idx].level);
-    int idx_upper_bound = level_start_idx(nodes[node_idx].level+1)-1;
-
-    float test_y_dist;
-    float test_x_dist;
-    bool aligned = 0;
-    float ratio;
-    int iteration = 0;
-    int jump_idx;
-    int test_idx = node_idx;
-
-    switch (direction) {
-        case 'n':
-            while (test_idx <= idx_upper_bound) {
-                jump_idx = pow(4, iteration)-level_start_idx(iteration); // +4-1=3, +16-4-1=11, +64-16-4-1=43, etc.
-                test_idx = node_idx + jump_idx; // we want to see if this node is the north neighbor
-                test_y_dist = cimag(nodes[test_idx].z_mid - nodes[node_idx].z_mid);
-                ratio = test_y_dist/distance;
-                aligned = creal(nodes[test_idx].z_mid) == creal(nodes[node_idx].z_mid);
-                if (0.8 < ratio && ratio < 1.2 && aligned) {return test_idx;}
-                iteration++;
-            }
-            break;
-
-        case 's':
-            while (test_idx >= idx_lower_bound) {
-                jump_idx = pow(4, iteration)-level_start_idx(iteration);
-                test_idx = node_idx - jump_idx;
-                test_y_dist = cimag(nodes[node_idx].z_mid - nodes[test_idx].z_mid);
-                ratio = test_y_dist/distance;
-                aligned = creal(nodes[test_idx].z_mid) == creal(nodes[node_idx].z_mid);
-                if (0.95 < ratio && ratio < 1.05 && aligned) {return test_idx;}
-                iteration++;
-            }
-            break;
-
-        case 'e':
-            while (test_idx <= idx_upper_bound) {
-                jump_idx = 2*(pow(4, iteration)-level_start_idx(iteration));
-                test_idx = node_idx + jump_idx;
-                test_x_dist = creal(nodes[test_idx].z_mid - nodes[node_idx].z_mid);
-                ratio = test_x_dist/distance;
-                aligned = cimag(nodes[test_idx].z_mid) == cimag(nodes[node_idx].z_mid);
-                if (0.8 < ratio && ratio < 1.2 && aligned) {return test_idx;}
-                iteration++;
-            }
-            break;
-
-        case 'w':
-            while (test_idx >= idx_lower_bound) {
-                jump_idx = 2*(pow(4, iteration)-level_start_idx(iteration));
-                test_idx = node_idx - jump_idx;
-                test_x_dist = creal(nodes[node_idx].z_mid - nodes[test_idx].z_mid);
-                ratio = test_x_dist/distance;
-                aligned = cimag(nodes[test_idx].z_mid) == cimag(nodes[node_idx].z_mid);
-                if (0.95 < ratio && ratio < 1.05 && aligned) {return test_idx;}
-                iteration++;
-            }
-            break;
-    }
-    return -1;
-}
-
-// returns Neighborhood struct with indices of neighboring nodes, -1 index for the node itself and non-existent neighbors
-Neighborhood get_neighborhood(Node *nodes, int node_idx) {
-    int sw_child_idx = child_idx(parent_idx(node_idx));
-    float mid2mid = creal(nodes[sw_child_idx+2].z_mid) - creal(nodes[sw_child_idx].z_mid);
-    int north, south, east, west, ne, se, nw, sw;
-
-    switch (node_idx-sw_child_idx) {
-        case 0: //search for south, west, nw, sw, se
-            north = node_idx+1; east = node_idx+2; ne = node_idx+3;
-            south = search_for_neighbor(nodes, node_idx, 's', mid2mid);
-            west = search_for_neighbor(nodes, node_idx, 'w', mid2mid);
-
-            if (south == -1 && west == -1) {nw = -1; sw = -1; se = -1;}
-            else if (south == -1) {nw = west+1; sw = -1; se = -1;}
-            else if (west == -1) {nw = -1; sw = -1; se = south+2;}
-            else {nw = west+1; sw = search_for_neighbor(nodes, west, 's', mid2mid); se = south+2;}
-            break;
-
-        case 1: //search for north, west, ne, nw, sw
-            south = node_idx-1; east = node_idx+2; se = node_idx+1;
-            north = search_for_neighbor(nodes, node_idx, 'n', mid2mid);
-            west = search_for_neighbor(nodes, node_idx, 'w', mid2mid);
-
-            if (north == -1 && west == -1) {ne = -1; nw = -1; sw = -1;}
-            else if (north == -1) {ne = -1; nw = -1; sw = west-1;}
-            else if (west == -1) {ne = north+2; nw = -1; sw = -1;}
-            else {ne = north+2; nw = search_for_neighbor(nodes, west, 'n', mid2mid); sw = west-1;}
-            break;
-
-        case 2: //search south, east, sw, se, ne
-            north = node_idx+1; west = node_idx-2; nw = node_idx - 1;
-            south = search_for_neighbor(nodes, node_idx, 's', mid2mid);
-            east = search_for_neighbor(nodes, node_idx, 'e', mid2mid);
-
-            if (south == -1 && east == -1) {sw = -1; se = -1; ne = -1;}
-            else if (south == -1) {sw = -1; se = -1; ne = east+1;}
-            else if (east == -1) {sw = south-2; se = -1; ne = -1;}
-            else {sw = south-2; se = search_for_neighbor(nodes, east, 's', mid2mid); ne = east+1;}
-            break;
-
-        case 3: //search north, east, se, ne, nw
-            south = node_idx-1; west = node_idx-2; sw = node_idx-3;
-            north = search_for_neighbor(nodes, node_idx, 'n', mid2mid);
-            east = search_for_neighbor(nodes, node_idx, 'e', mid2mid);
-
-            if (north == -1 && east == -1) {se = -1; ne = -1; nw = -1;}
-            else if (north == -1) {se = east-1; ne = -1; nw = -1;}
-            else if (east == -1) {se = -1; ne = -1; nw = north-2;}
-            else {se = east-1; ne = search_for_neighbor(nodes, east, 'n', mid2mid); nw = north-2;}
-            break;
-
-        default:
-            north = -1; south = -1; east = -1; west = -1;
-            ne = -1; se = -1; nw = -1; sw = -1;
-    }
-    return (Neighborhood) {
-        .nodes = {
-            {nw, north, ne},
-            {west, -1, east},
-            {sw, south, se}}
-    };
-}
-
-// returns up to 27 well separated node indices, padded with -1 if there are less than 27 well separated indices
-WellSeparated get_well_separated(Node *nodes, int node_idx) {
-    Neighborhood parent_neighborhood = get_neighborhood(nodes, parent_idx(node_idx));
-    WellSeparated *well_separated = malloc(sizeof(WellSeparated));
-    int ws_idx = 0;
-
-    for (int i = 0; i < 3; i++) { for (int j = 0; j < 3; j++) {
-        int c_idx;
-        int p_idx = parent_neighborhood.nodes[i][j];
-        if (p_idx != -1) { // case when
-            c_idx = child_idx(p_idx);
-            for (int k = 0; k < 4; k++) {
-                float distance = cabsf(nodes[node_idx].z_mid - nodes[c_idx].z_mid);
-                float distance_ratio = distance*pow(2.0, nodes[node_idx].level);
-                if (distance_ratio > 1.9) {well_separated->nodes[ws_idx] = c_idx; ws_idx++;}
-                c_idx++;
-            }
-        }
-    }}
-
-    for (int i = ws_idx; i < 27; i++) {well_separated->nodes[i] = -1;}
-    return *well_separated;
-}
-
 /*
     input:
         - nodes: tree of Nodes representing FMM hiearchical decomposition
@@ -495,14 +504,22 @@ WellSeparated get_well_separated(Node *nodes, int node_idx) {
 void ifo(Node *nodes, int node_idx, int P) {
     float complex *incoming_expansions = &nodes[node_idx].expansions[P];
 
-    int interaction_list[] = {0};       // TODO: construct interaction list for each node
-    for (int i = 0; i < -1; i++) {      // TODO: currently set so iteration doesn't occur
+    WellSeparated well_separated_nodes = get_well_separated(nodes, node_idx);
+    int interaction_list[27];
+    int interaction_list_size = 0;
+    for (int i = 0; i < 27; i++) {
+        if (well_separated_nodes.nodes[i] != -1) {
+            interaction_list[interaction_list_size++] = well_separated_nodes.nodes[i];
+        }
+    }
+
+    for (int i = 0; i < interaction_list_size; i++) {
         int c_idx = interaction_list[i];
         float complex offset = nodes[node_idx].z_mid - nodes[c_idx].z_mid;          // current - interaction list node
         float complex reverse_offset = nodes[c_idx].z_mid - nodes[node_idx].z_mid;  // interaction list node - current
 
         // r = 0 case
-        incoming_expansions[0] += nodes[c_idx].expansions[0] * clog(offset);
+        incoming_expansions[0] += nodes[c_idx].expansions[0] * clogf(offset);
         float complex offset_power_acc = -1*reverse_offset; // (c_sigma - c_tau)^p starting at p=1
         for (int p = 1; p < P; p++) {
             incoming_expansions[0] += nodes[c_idx].expansions[p] / offset_power_acc;
@@ -524,6 +541,37 @@ void ifo(Node *nodes, int node_idx, int P) {
 
             offset_power_acc *= reverse_offset; // (c_sigma - c_tau)^r
         }
+    }
+}
+
+/*
+    input:
+        - particles: array of Particle structs representing the source/target particles
+        - nodes: tree of Nodes representing FMM hiearchical decomposition
+        - node_idx: index of node in nodes array for which target from incoming expansions
+        is being computed
+        - P: number of terms in multipole expansion
+    output:
+        - particles[p_idx].p: the potential at each particle contained by this node is updated
+        to include contribution from the incoming expansions at this node
+    
+    Compute "target from incoming" potential for each particle at this node according to:
+        v^\tau = T^tfi_\tau v^\tau
+    where T^tfi_\tau is the translation operator that maps incoming expansions at node
+    \tau to the target potential:
+        T^tfi_\tau(i, p) = (x_i - c_\tau)^(p-1)
+    and v^\tau is the incoming expansion at node \tau
+*/
+void tfi(Particle *particles, Node *nodes, int node_idx, int P) {
+    float complex *incoming_expansions = &nodes[node_idx].expansions[P];
+
+    for (int p_idx = nodes[node_idx].start; p_idx <= nodes[node_idx].end; p_idx++) {
+        float complex offset = particles[p_idx].z - nodes[node_idx].z_mid;
+        float complex offset_power_acc = 1.0 + 0.0*I;
+        for (int p = 0; p < P; p++) {
+            particles[p_idx].p += crealf(incoming_expansions[p] * offset_power_acc);
+            offset_power_acc *= offset;
+        }    
     }
 }
 
@@ -595,6 +643,79 @@ int calculate_local(Particle *particles, Node *nodes, int num_particles, int num
     free(binom);
     return 0;
 }
+
+int evaluate_potentials(Particle *particles, Node *nodes, int num_particles, int num_levels, int num_nodes, int P) {
+    /*
+     * Evaluate potentials at each particle by combining contributions from
+     * local expansions at the leaf node containing the particle and
+     * direct interactions with nearby particles in the node itself and neighboring nodes
+     * not captured by the multipole expansions.
+     */
+
+    int num_leaves = pow(4, num_levels);
+    for (int i = 0; i < num_leaves; i++) {
+        int leaf_idx = num_nodes - num_leaves + i;
+        Node *node = &nodes[leaf_idx];
+        Neighborhood neighborhood = get_neighborhood(nodes, leaf_idx);
+
+        // initialize potentials at each particle in this leaf node to zero
+        for (int p_idx = node->start; p_idx <= node->end; p_idx++) {
+            particles[p_idx].p = 0.0f;
+        }
+
+        // compute targets from incoming expansions for each particle in this leaf node
+        tfi(particles, nodes, leaf_idx, P);
+
+        // compute near-field contributions from particles in this leaf node and neighboring
+        // nodes via direct contribution
+        for (int p_idx = node->start; p_idx <= node->end; p_idx++) {
+            Particle *p = &particles[p_idx];
+
+            // evaluate contributions from neighboring nodes
+            for (int x = 0; x < 3; x++) {
+                for (int y = 0; y < 3; y++) {
+                    if (neighborhood.nodes[x][y] != -1) {
+                        int neighbor_idx = neighborhood.nodes[x][y];
+                        Node *neighbor = &nodes[neighbor_idx];
+
+                        for (int q_idx = neighbor->start; q_idx <= neighbor->end; q_idx++) {
+                            Particle q = particles[q_idx];
+                            float complex offset = p->z - q.z;
+                            p->p += crealf(q.q * clogf(offset));
+                        }
+                    }
+                }
+            }
+
+            // evaluate contributions from particles in this node
+            for (int q_idx = node->start; q_idx <= node->end; q_idx++) {
+                Particle q = particles[q_idx];
+                if (q_idx != p_idx) {
+                    float complex offset = p->z - q.z;
+                    p->p += crealf(q.q * clogf(offset));
+                }
+            }
+        }
+    }
+
+    return 0;
+}
+
+int brute_force(Particle *particles, int num_particles) {
+    for (int p_idx = 0; p_idx < num_particles; p_idx++) {
+        Particle *p = &particles[p_idx];
+        p->p = 0.0f;
+        for (int q_idx = 0; q_idx < num_particles; q_idx++) {
+            if (p_idx != q_idx) {
+                Particle q = particles[q_idx];
+                float complex offset = p->z - q.z;
+                p->p += crealf(q.q * clogf(offset));
+            }
+        }
+    }
+    return 0;
+}
+
 
 /* intended usage:
     ./fmm <input_file> <output_file> <num_levels> <p> <num_particles> <num_threads>
@@ -707,7 +828,31 @@ int main(int argc, char * argv[])
         return 1;
     }
 
+    // run step 4: evaluate potentials at every leaf node
+    if (evaluate_potentials(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
+        fprintf(stderr, "Error evaluating potentials at leaf nodes\n");
+        free(particles);
+        for (int i = 0; i < num_nodes; i++) {
+            free(nodes[i].expansions);
+        }
+        free(nodes);
+        return 1;
+    }
+
+    // brute force calculation of particle-wise potentials (on copied particles
+    // array so as not to overwrite FMM results)
+    Particle * particles_bf = (Particle *)malloc(num_particles * sizeof(Particle));
+    memcpy(particles_bf, particles, num_particles * sizeof(Particle));
+    brute_force(particles_bf, num_particles);
+
+    // compare brute-force and FMM results!
+    for (int i = 0; i < num_particles; i++) {
+        printf("Particle %d:\n \tFMM potential = %f, brute-force potential = %f, error = %e\n\n",
+               i, particles[i].p, particles_bf[i].p, fabsf(particles[i].p - particles_bf[i].p));
+    }
+
     free(particles);
+    free(particles_bf);
     for (int i = 0; i < num_nodes; i++) {
         free(nodes[i].expansions);
     }
