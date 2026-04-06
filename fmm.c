@@ -89,7 +89,7 @@ Partition four_sort(Particle *particles, Node *node) {
     int high = node->end;
 
     // sort particles by x values first
-    while (low < high) {
+    while (low <= high) {
         if (particles[low].x <= node->x_mid)
             low++;
         else if (particles[high].x > node->x_mid)
@@ -112,7 +112,7 @@ Partition four_sort(Particle *particles, Node *node) {
     // (i.e., all particles belonging to left half)
     low = node->start;
     high = x_split - 1;
-    while (low < high) {
+    while (low <= high) {
         if (particles[low].y <= node->y_mid)
             low++;
         else if (particles[high].y > node->y_mid)
@@ -133,7 +133,7 @@ Partition four_sort(Particle *particles, Node *node) {
     // sort particles by y values for those with x > x_mid
     low = x_split;
     high = node->end;
-    while (low < high) {
+    while (low <= high) {
         if (particles[low].y <= node->y_mid)
             low++;
         else if (particles[high].y > node->y_mid)
@@ -392,11 +392,11 @@ int construct_tree(Particle *particles, Node *nodes, int num_particles, int num_
 */
 void ofs(Particle *particles, Node *node, int P) {
     for (int j = node->start; j <= node->end; j++) {
-        node->expansions[0] = node->expansions[0] + (float) particles[j].q;
+        node->expansions[0] += (float) particles[j].q;
 
         float complex offset = particles[j].z - node->z_mid;
         for (int p = 1; p < P; p++) {
-            node->expansions[p] = node->expansions[p] - cpow(offset, p) * (float) particles[j].q / (float) p;
+            node->expansions[p] -= cpow(offset, p) * (float) particles[j].q / (float) p;
         }
     }
 }
@@ -427,17 +427,34 @@ void ofo(Node *nodes, int node_idx, int P, int *binom) {
     for (int i = 0; i < 4; i++) {
         float complex offset = nodes[c_idx+i].z_mid - nodes[node_idx].z_mid;
 
-        for (int r = 1; r <= P; r++) {
+        for (int r = 0; r < P; r++) {
             // accumulate powers of offset for use in binomial expansion
             float complex offset_power_acc = 1;
+            
+            // note: need to convert between form of outgoing expansionsin equation 7.2 and form
+            // expected in Theorem 7.1 where the outgoing expansions in equation 7.2 have a 
+            // leading -1/p term not included in the form expected by Theorem 7.1
+            float complex q_hat_r = 0;
 
             // iterate backwards to fill in multipole expansions from low degree to high degree
-            for (int s = r; s > 0; s--) {
-                // accumulate contribution of child multipole expansion to parent
-                int r_choose_s = binom[(r-1)*P + (s-1)];
-                nodes[node_idx].expansions[r-1] += r_choose_s * offset_power_acc * nodes[c_idx+i].expansions[s-1];
+            for (int s = r; s >= 0; s--) {
+                float complex q_hat_s;
+                if (s == 0)
+                    q_hat_s = nodes[c_idx+i].expansions[0];
+                else
+                    q_hat_s = - (float) s * nodes[c_idx+i].expansions[s];
+
+                // accumulate contribution of child multipole expansion to parent    
+                q_hat_r += choose(r, s) * offset_power_acc * q_hat_s;
                 offset_power_acc *= offset;
             }
+
+            // convert back to form with -1/p factor in outgoing expansions
+            // (because this form is expected by IFO per equation 6.26)
+            if (r == 0)
+                nodes[node_idx].expansions[0] += q_hat_r;
+            else
+                nodes[node_idx].expansions[r] += -q_hat_r / (float) r;
         }
     }
 }
@@ -468,15 +485,15 @@ void ifi(Node *nodes, int node_idx, int P, int *binom) {
     float complex offset =  nodes[node_idx].z_mid - nodes[p_idx].z_mid; // child - parent
 
     // iterate from highest degree of incoming expansion down to lowest degree
-    for (int r = P; r > 0; r--) {
+    for (int r = P-1; r >= 0; r--) {
         // accumulate powers of offset for use in binomial expansion
         float complex offset_power_acc = 1;
 
         // iterate backwards to fill in multipole expansions from low degree to high degree
-        for (int p = r; p <= P; p++) {
+        for (int p = r; p <= P-1; p++) {
             // accumulate contribution of child multipole expansion to parent
-            int p_choose_r = binom[(p-1)*P + (r-1)];
-            incoming_expansions[r-1] += p_choose_r * offset_power_acc * nodes[p_idx].expansions[P+(p-1)];
+            int p_choose_r = choose(p, r); // p choose r -- TODO: use binom[(p-1)*P + (r-1)];
+            incoming_expansions[r] += p_choose_r * offset_power_acc * nodes[p_idx].expansions[P+p];
             offset_power_acc *= offset;
         }
     }
@@ -846,10 +863,16 @@ int main(int argc, char * argv[])
     brute_force(particles_bf, num_particles);
 
     // compare brute-force and FMM results!
+    float max_error = 0.0f;
     for (int i = 0; i < num_particles; i++) {
+        float error = fabsf(particles[i].p - particles_bf[i].p);
+        if (error > max_error) {
+            max_error = error;
+        }
         printf("Particle %d:\n \tFMM potential = %f, brute-force potential = %f, error = %e\n\n",
                i, particles[i].p, particles_bf[i].p, fabsf(particles[i].p - particles_bf[i].p));
     }
+    printf("Maximum error between FMM and brute-force potentials: %e\n", max_error);
 
     free(particles);
     free(particles_bf);
