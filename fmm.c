@@ -735,18 +735,19 @@ int brute_force(Particle *particles, int num_particles) {
 
 
 /* intended usage:
-    ./fmm <input_file> <output_file> <num_levels> <p> <num_particles> <num_threads>
+    ./fmm <input_file> <output_file> <num_levels> <p> <num_particles> <is_parallel> <num_threads>
 */
 int main(int argc, char * argv[])
 {
     // read inputs from command line
-    if (argc != 7) {
-        fprintf(stderr, "Usage: %s <input_file> <output_file> <num_levels> <p> <num_particles> <num_threads>\n", argv[0]);
+    if (argc != 8) {
+        fprintf(stderr, "Usage: %s <input_file> <output_file> <num_levels> <p> <num_particles> <is_parallel> <num_threads>\n", argv[0]);
         fprintf(stderr, "input_file: path to the input file containing particle data\n");
         fprintf(stderr, "output_file: path to the output file where results will be written\n");
         fprintf(stderr, "num_levels: depth of FMM expansion tree\n");
         fprintf(stderr, "P: order of multipole expansion\n");
         fprintf(stderr, "num_particles: number of particles\n");
+        fprintf(stderr, "is_parallel: whether to run in parallel (1) or sequential (0)\n");
         fprintf(stderr, "num_threads: number of threads to use\n");
         return 1;
     }
@@ -756,7 +757,8 @@ int main(int argc, char * argv[])
     int num_levels = atoi(argv[3]);
     int P = atoi(argv[4]);
     int num_particles = atoi(argv[5]);
-    int num_threads = atoi(argv[6]);
+    int is_parallel = atoi(argv[6]);
+    int num_threads = atoi(argv[7]);
 
     // read input particle data from file
     Particle *particles = (Particle *)malloc(num_particles * sizeof(Particle));
@@ -812,50 +814,58 @@ int main(int argc, char * argv[])
         }
     }
 
-    // run step 1: tree construction & sorting
-    if (construct_tree(particles, nodes, num_particles, num_levels) != 0) {
-        fprintf(stderr, "Error constructing tree\n");
-        free(particles);
-        for (int i = 0; i < num_nodes; i++) {
-            free(nodes[i].expansions);
-        }
-        free(nodes);
-        return 1;
-    }
+    if (is_parallel) {
+        // set # of threads for parallel execution
+        #pragma omp num_threads(num_threads)
 
-    // run step 2: calculate multipole expansions (upwards pass)
-    if (calculate_multipole(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
-        fprintf(stderr, "Error calculating multipole expansions\n");
-        free(particles);
-        for (int i = 0; i < num_nodes; i++) {
-            free(nodes[i].expansions);
+        // run parallel execution
+        // #TODO
+    } else { // sequential execution
+        // run step 1: tree construction & sorting
+        if (construct_tree(particles, nodes, num_particles, num_levels) != 0) {
+            fprintf(stderr, "Error constructing tree\n");
+            free(particles);
+            for (int i = 0; i < num_nodes; i++) {
+                free(nodes[i].expansions);
+            }
+            free(nodes);
+            return 1;
         }
-        free(nodes);
-        return 1;
-    }
 
-    // run step 3: calculate local expansions (downwards pass)
-    if (calculate_local(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
-        fprintf(stderr, "Error calculating local expansions\n");
-        free(particles);
-        for (int i = 0; i < num_nodes; i++) {
-            free(nodes[i].expansions);
+        // run step 2: calculate multipole expansions (upwards pass)
+        if (calculate_multipole(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
+            fprintf(stderr, "Error calculating multipole expansions\n");
+            free(particles);
+            for (int i = 0; i < num_nodes; i++) {
+                free(nodes[i].expansions);
+            }
+            free(nodes);
+            return 1;
         }
-        free(nodes);
-        return 1;
-    }
 
-    // run step 4: evaluate potentials at every leaf node
-    if (evaluate_potentials(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
-        fprintf(stderr, "Error evaluating potentials at leaf nodes\n");
-        free(particles);
-        for (int i = 0; i < num_nodes; i++) {
-            free(nodes[i].expansions);
+        // run step 3: calculate local expansions (downwards pass)
+        if (calculate_local(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
+            fprintf(stderr, "Error calculating local expansions\n");
+            free(particles);
+            for (int i = 0; i < num_nodes; i++) {
+                free(nodes[i].expansions);
+            }
+            free(nodes);
+            return 1;
         }
-        free(nodes);
-        return 1;
-    }
 
+        // run step 4: evaluate potentials at every leaf node
+        if (evaluate_potentials(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
+            fprintf(stderr, "Error evaluating potentials at leaf nodes\n");
+            free(particles);
+            for (int i = 0; i < num_nodes; i++) {
+                free(nodes[i].expansions);
+            }
+            free(nodes);
+            return 1;
+        }
+    }
+    
     // brute force calculation of particle-wise potentials (on copied particles
     // array so as not to overwrite FMM results)
     Particle * particles_bf = (Particle *)malloc(num_particles * sizeof(Particle));
