@@ -476,7 +476,6 @@ void ofo(Node *nodes, int node_idx, int P, int *binom) {
     where u_\sigma are the incoming expansion coefficients for this node, u_\tau are the incoming
     expansion coefficients of the parent node, and T^ifi_\sigma,\tau is the upper-triangular
     translation operator that maps incoming expansions from the parent to the child node.
-
 */
 void ifi(Node *nodes, int node_idx, int P, int *binom) {
     float complex *incoming_expansions = &nodes[node_idx].expansions[P];
@@ -633,9 +632,7 @@ int calculate_local(Particle *particles, Node *nodes, int num_particles, int num
 
     // set incoming expansion of root & level 1 nodes to zero
     for (int i = 0; i < (1 + 4); i++) { // root node + 4 level 1 nodes
-        for (int p = 0; p < P; p++) {
-            memset(&nodes[i].expansions[P], 0, P*sizeof(float complex));
-        }
+        memset(&nodes[i].expansions[P], 0, P*sizeof(float complex));
     }
 
     // pre-compute binomial co-efficients
@@ -655,6 +652,44 @@ int calculate_local(Particle *particles, Node *nodes, int num_particles, int num
             ifi(nodes, node_idx, P, binom);
             ifo(nodes, node_idx, P);
         }
+    }
+
+    free(binom);
+    return 0;
+}
+
+int calculate_local_parallel(Particle *particles, Node *nodes, int num_particles, int num_levels, int num_nodes, int P) {
+    /*
+     * Downwards pass: compute incoming expansion for every node in a pass over all nodes,
+     * going from larger->smaller. For each node, combine the incoming expansion of its parent
+     * with the contributions from the outgoing expansions of all boxes in its interaction list.
+    */
+
+    // set incoming expansion of root & level 1 nodes to zero
+    for (int i = 0; i < (1 + 4); i++) { // root node + 4 level 1 nodes
+        memset(&nodes[i].expansions[P], 0, P*sizeof(float complex));
+    }
+
+    // pre-compute binomial co-efficients
+    int *binom = (int*)malloc(P*P*sizeof(int));
+    for (int r = 1; r <= P; r++) {
+        for (int s = 1; s <= P; s++) {
+            binom[P*(r-1)+(s-1)] = choose(r,s);
+        }
+    }
+
+    // iterate from level l=2 to leaf nodes, setting incoming expansions
+    for (int l = 2; l <= num_levels; l++) {
+        int nodes_in_level = pow(4, l);
+        int level_start_idx = (pow(4, l) - 1) / 3;
+
+        #pragma omp parallel for
+        for (int i = 0; i < nodes_in_level; i++) {
+            int node_idx = level_start_idx + i;
+            ifi(nodes, node_idx, P, binom);
+            ifo(nodes, node_idx, P);
+        }
+        // implicit barrier: all threads must finish processing level l before level l+1
     }
 
     free(binom);
@@ -716,6 +751,64 @@ int evaluate_potentials(Particle *particles, Node *nodes, int num_particles, int
     }
 
     return 0;
+}
+
+int evaluate_potentials_parallel(Particle *particles, Node *nodes, int num_particles, int num_levels, int num_nodes, int P) {
+    /*
+     * Evaluate potentials at each particle by combining contributions from
+     * local expansions at the leaf node containing the particle and
+     * direct interactions with nearby particles in the node itself and neighboring nodes
+     * not captured by the multipole expansions.
+     * 
+     * The parallel implementation should be parallelized over leaf nodes, which should be perfectly parallel
+     * since there are no dependencies between leaf nods at this stage of the algorithm.
+     */
+
+    int num_leaves = pow(4, num_levels);
+    #pragma omp parallel for
+    for (int i = 0; i < num_leaves; i++) {
+        int leaf_idx = num_nodes - num_leaves + i;
+        Node *node = &nodes[leaf_idx];
+        Neighborhood neighborhood = get_neighborhood(nodes, leaf_idx);
+
+        // initialize potentials at each particle in this leaf node to zero
+        for (int p_idx = node->start; p_idx <= node->end; p_idx++) {
+            particles[p_idx].p = 0.0f;
+        }
+
+        // step 5: far-field potential via "targets from incoming" expansions for each particle
+        tfi(particles, nodes, leaf_idx, P);
+
+        // step 6: near-field contributions from particles in neighbors (including this node) via direct contribution
+        for (int p_idx = node->start; p_idx <= node->end; p_idx++) {
+            Particle *p = &particles[p_idx];
+
+            // evaluate contributions from neighboring nodes
+            for (int x = 0; x < 3; x++) {
+                for (int y = 0; y < 3; y++) {
+                    if (neighborhood.nodes[x][y] != -1) {
+                        int neighbor_idx = neighborhood.nodes[x][y];
+                        Node *neighbor = &nodes[neighbor_idx];
+
+                        for (int q_idx = neighbor->start; q_idx <= neighbor->end; q_idx++) {
+                            Particle q = particles[q_idx];
+                            float complex offset = p->z - q.z;
+                            p->p += crealf(q.q * clogf(offset));
+                        }
+                    }
+                }
+            }
+
+            // evaluate contributions from particles in this node
+            for (int q_idx = node->start; q_idx <= node->end; q_idx++) {
+                Particle q = particles[q_idx];
+                if (q_idx != p_idx) {
+                    float complex offset = p->z - q.z;
+                    p->p += crealf(q.q * clogf(offset));
+                }
+            }
+        }
+    }
 }
 
 int brute_force(Particle *particles, int num_particles) {
@@ -814,12 +907,53 @@ int main(int argc, char * argv[])
         }
     }
 
-    if (is_parallel) {
+    if (is_parallel) { // parallel execution
         // set # of threads for parallel execution
         #pragma omp num_threads(num_threads)
 
-        // run parallel execution
-        // #TODO
+        // run step 1: tree construction & sorting
+        if (construct_tree(particles, nodes, num_particles, num_levels) != 0) {
+            fprintf(stderr, "Error constructing tree\n");
+            free(particles);
+            for (int i = 0; i < num_nodes; i++) {
+                free(nodes[i].expansions);
+            }
+            free(nodes);
+            return 1;
+        }
+
+        // run step 2: calculate multipole expansions (upwards pass)
+        if (calculate_multipole(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
+            fprintf(stderr, "Error calculating multipole expansions\n");
+            free(particles);
+            for (int i = 0; i < num_nodes; i++) {
+                free(nodes[i].expansions);
+            }
+            free(nodes);
+            return 1;
+        }
+
+        // run step 3: calculate local expansions (downwards pass)
+        if (calculate_local_parallel(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
+            fprintf(stderr, "Error calculating local expansions\n");
+            free(particles);
+            for (int i = 0; i < num_nodes; i++) {
+                free(nodes[i].expansions);
+            }
+            free(nodes);
+            return 1;
+        }
+
+        // run step 4: evaluate potentials at every leaf node
+        if (evaluate_potentials_parallel(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
+            fprintf(stderr, "Error evaluating potentials at leaf nodes\n");
+            free(particles);
+            for (int i = 0; i < num_nodes; i++) {
+                free(nodes[i].expansions);
+            }
+            free(nodes);
+            return 1;
+        }
     } else { // sequential execution
         // run step 1: tree construction & sorting
         if (construct_tree(particles, nodes, num_particles, num_levels) != 0) {
