@@ -370,6 +370,12 @@ int construct_tree(Particle *particles, Node *nodes, int num_particles, int num_
         num_boxes = num_boxes*4;
     }
 
+    // TODO: use first touch placement to copy particles into new array such that each leaf node's particles
+    // are stored in memory close to where threads would access them in later computations (NUMA)
+
+    // TODO: use first touch placement to initialize the expansions array chunks for each node such that
+    // they are stored in memory close to where threads would access them in later computations (NUMA)
+
     return 0;
 }
 
