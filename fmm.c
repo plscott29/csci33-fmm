@@ -809,6 +809,8 @@ int evaluate_potentials_parallel(Particle *particles, Node *nodes, int num_parti
             }
         }
     }
+
+    return 0;
 }
 
 int brute_force(Particle *particles, int num_particles) {
@@ -909,7 +911,7 @@ int main(int argc, char * argv[])
 
     if (is_parallel) { // parallel execution
         // set # of threads for parallel execution
-        #pragma omp num_threads(num_threads)
+        omp_set_num_threads(num_threads);
 
         // run step 1: tree construction & sorting
         if (construct_tree(particles, nodes, num_particles, num_levels) != 0) {
