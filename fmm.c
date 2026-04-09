@@ -746,7 +746,7 @@ int calculate_local(Particle *particles, Node *nodes, int num_particles, int num
             binom[P*(r-1)+(s-1)] = choose(r,s);
         }
     }
-
+    
     // iterate from level l=2 to leaf nodes, setting incoming expansions
     for (int l = 2; l <= num_levels; l++) {
         int nodes_in_level = pow(4, l);
@@ -786,6 +786,10 @@ int calculate_local_parallel(Particle *particles, Node *nodes, int num_particles
     for (int l = 2; l <= num_levels; l++) {
         int nodes_in_level = pow(4, l);
         int level_start_idx = (pow(4, l) - 1) / 3;
+
+        // TODO: only run this in parallel above a certain threshold of nodes in level
+        // since there is overhead to parallelization and levels with very few nodes
+        // may not benefit from parallelization
 
         #pragma omp parallel for
         for (int i = 0; i < nodes_in_level; i++) {
