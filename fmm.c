@@ -1003,6 +1003,7 @@ int main(int argc, char * argv[])
         free(particles);
         return 1;
     }
+    // TODO: consolidate allocations for expansions into a single large block to improve memory locality
     for (int i=0; i < num_nodes; i++) {
         nodes[i].expansions = (float complex *) calloc(2 * P, sizeof(float complex));
         if (nodes[i].expansions == NULL) {
