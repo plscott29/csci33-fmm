@@ -672,6 +672,55 @@ int calculate_multipole(Particle *particles, Node *nodes, int num_particles, int
     return 0;
 }
 
+int calculate_multipole_parallel(Particle *particles, Node *nodes, int num_particles, int num_levels, int num_nodes, int P) {
+    /*
+     * Upwards pass: compute outgoing expansion of each box from leaf nodes up to the root.
+     * For a leaf node, compute expansion directly particles in the node ("outgoing from sources");
+     * for a parent node, use outgoing expansions of its children to ("outgoing from outgoing")
+     */
+
+    // compute multipole expansions for all leaf nodes: "outgoing from sources"
+    int num_leaves = pow(4, num_levels);
+
+    #pragma omp parallel for
+    for (int i = 0; i < num_leaves; i++) {
+        int leaf_idx = num_nodes - num_leaves + i;
+        ofs(particles, &nodes[leaf_idx], P);
+    }
+
+    // pre-compute binomial co-efficients
+    int *binom = (int*)malloc(P*P*sizeof(int));
+    for (int r = 1; r <= P; r++) {
+        for (int s = 1; s <= P; s++) {
+            binom[P*(r-1)+(s-1)] = choose(r,s);
+        }
+    }
+
+    // compute multipole expansions for all non-leaf nodes: "outgoing from outgoing"
+    // iterate over all non-leaf nodes in reverse order (from bottom of tree up to root)
+    //for (int i = (num_nodes - num_leaves) - 1; i > 0; i--) {
+    //    ofo(nodes, i, P, binom);
+    //}
+
+    for (int l = num_levels-1; l > 0; l--) {
+        int start_idx = level_start_idx(l); int stop_idx = level_start_idx(l+1);
+        if (l >= 5) {
+            #pragma omp parallel for
+            for (int i = start_idx; i < stop_idx; i++) {
+                ofo(nodes, i, P, binom);
+            }
+        }
+        else {
+            for (int i = start_idx; i < stop_idx; i++) {
+                ofo(nodes, i, P, binom);
+            }
+        }
+    }
+
+    free(binom);
+    return 0;
+}
+
 int calculate_local(Particle *particles, Node *nodes, int num_particles, int num_levels, int num_nodes, int P) {
     /*
      * Downwards pass: compute incoming expansion for every node in a pass over all nodes,
@@ -984,7 +1033,7 @@ int main(int argc, char * argv[])
         t_prev = omp_get_wtime();
         printf("Starting multipole\n");
         // run step 2: calculate multipole expansions (upwards pass)
-        if (calculate_multipole(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
+        if (calculate_multipole_parallel(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
             fprintf(stderr, "Error calculating multipole expansions\n");
             free(particles);
             for (int i = 0; i < num_nodes; i++) {
