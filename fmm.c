@@ -90,9 +90,9 @@ Partition four_sort(Particle *particles, Node *node) {
 
     // sort particles by x values first
     while (low <= high) {
-        if (particles[low].x <= node->x_mid)
+        if (particles[low].x <= node->x_mid) //if (creal(particles[low].z) <= creal(node->z_mid)) TODO: Remove x, y fields (only use z)
             low++;
-        else if (particles[high].x > node->x_mid)
+        else if (particles[high].x > node->x_mid) //else if (creal(particles[high].z) > creal(node->z_mid)) TODO: Remove x, y fields (only use z)
             high--;
         else {
             // swap particles at indices low & high 
@@ -372,6 +372,55 @@ int construct_tree(Particle *particles, Node *nodes, int num_particles, int num_
 
     return 0;
 }
+
+
+int construct_tree_parallel(Particle *particles, Node *nodes, int num_particles, int num_levels)
+{
+    // initialize root node
+    Node *root = &nodes[0];                 // TODO: optimize by not storing root?
+    root->level = 0;
+    root->start = 0; root->end = num_particles-1;
+    root->x_mid = 0.5; root->y_mid = 0.5;   // TODO: parameterize bounding box?
+    root->z_mid = 0.5 + 0.5*I;
+
+    // set the rest of the levels
+    int p_idx = 0;
+    int c_idx;
+    int num_boxes = 1;     // 'num_boxes' is number of parent boxes
+
+    for (int level = 0; level < num_levels; level++) {  // 'level' refers to level of parent node(s)
+        int level_start = level_start_idx(level);
+        # pragma omp parallel for private(c_idx, p_idx)
+        for (int i = 0; i < num_boxes; i++) {
+            p_idx = level_start + i;
+            // sort particles and get the partitions of subarray of particles for this parent node
+            Partition partitions = four_sort(particles, &nodes[p_idx]);
+
+            // set four nodes corresponding to the four quadrants of this parent node
+            c_idx = child_idx(p_idx);
+            //printf("Level: %d, Parent: %d, Child: %d, Thread: %d\n", level, p_idx, c_idx, omp_get_thread_num());
+            // calculate offset from parent midpoint to child midpoint:
+            // shift = (1/2^(level+1)) / 2 = 1/2^(level+2)
+            float shift = 1.0 / pow(2, level+2);
+
+            // quadrant offsets from parent to child with ordering: SW, NW, SE, NE
+            float x_mid_shifts[4] = {-shift, -shift, shift, shift};
+            float y_mid_shifts[4] = {-shift, shift, -shift, shift};
+
+            for (int q = 0; q < 4; q++) {
+                nodes[c_idx + q].level = level+1;
+                nodes[c_idx + q].start = partitions.quadrant_bounds[q][0];
+                nodes[c_idx + q].end = partitions.quadrant_bounds[q][1];
+                nodes[c_idx + q].x_mid = nodes[p_idx].x_mid + x_mid_shifts[q];
+                nodes[c_idx + q].y_mid = nodes[p_idx].y_mid + y_mid_shifts[q];
+                nodes[c_idx + q].z_mid = nodes[c_idx + q].x_mid + nodes[c_idx + q].y_mid*I;
+            }
+        }
+        num_boxes = num_boxes*4;
+    }
+    return 0;
+}
+
 
 /*
     input:
@@ -834,6 +883,9 @@ int brute_force(Particle *particles, int num_particles) {
 */
 int main(int argc, char * argv[])
 {
+    double t_0 = omp_get_wtime();
+    double t_prev;
+    double t_next;
     // read inputs from command line
     if (argc != 8) {
         fprintf(stderr, "Usage: %s <input_file> <output_file> <num_levels> <p> <num_particles> <is_parallel> <num_threads>\n", argv[0]);
@@ -912,9 +964,12 @@ int main(int argc, char * argv[])
     if (is_parallel) { // parallel execution
         // set # of threads for parallel execution
         omp_set_num_threads(num_threads);
-
+        printf("Running parallel version\n");
+        t_prev = omp_get_wtime();
+        printf("Starting tree construction\n");
         // run step 1: tree construction & sorting
-        if (construct_tree(particles, nodes, num_particles, num_levels) != 0) {
+        if (construct_tree_parallel(particles, nodes, num_particles, num_levels) != 0) {
+        //if (construct_tree(particles, nodes, num_particles, num_levels) != 0) {
             fprintf(stderr, "Error constructing tree\n");
             free(particles);
             for (int i = 0; i < num_nodes; i++) {
@@ -923,7 +978,11 @@ int main(int argc, char * argv[])
             free(nodes);
             return 1;
         }
+        t_next = omp_get_wtime();
+        printf("Finished, time elapsed: %.5f\n", t_next-t_prev);
 
+        t_prev = omp_get_wtime();
+        printf("Starting multipole\n");
         // run step 2: calculate multipole expansions (upwards pass)
         if (calculate_multipole(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
             fprintf(stderr, "Error calculating multipole expansions\n");
@@ -934,7 +993,11 @@ int main(int argc, char * argv[])
             free(nodes);
             return 1;
         }
+        t_next = omp_get_wtime();
+        printf("Finished, time elapsed: %.5f\n", t_next-t_prev);
 
+        t_prev = omp_get_wtime();
+        printf("Starting local\n");
         // run step 3: calculate local expansions (downwards pass)
         if (calculate_local_parallel(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
             fprintf(stderr, "Error calculating local expansions\n");
@@ -945,7 +1008,12 @@ int main(int argc, char * argv[])
             free(nodes);
             return 1;
         }
+        t_next = omp_get_wtime();
+        printf("Finished, time elapsed: %.5f\n", t_next-t_prev);
 
+
+        t_prev = omp_get_wtime();
+        printf("Starting particle potentials\n");
         // run step 4: evaluate potentials at every leaf node
         if (evaluate_potentials_parallel(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
             fprintf(stderr, "Error evaluating potentials at leaf nodes\n");
@@ -956,6 +1024,8 @@ int main(int argc, char * argv[])
             free(nodes);
             return 1;
         }
+        t_next = omp_get_wtime();
+        printf("Finished, time elapsed: %.5f\n", t_next-t_prev);
     } else { // sequential execution
         // run step 1: tree construction & sorting
         if (construct_tree(particles, nodes, num_particles, num_levels) != 0) {
@@ -1015,8 +1085,8 @@ int main(int argc, char * argv[])
         if (error > max_error) {
             max_error = error;
         }
-        printf("Particle %d:\n \tFMM potential = %f, brute-force potential = %f, error = %e\n\n",
-               i, particles[i].p, particles_bf[i].p, fabsf(particles[i].p - particles_bf[i].p));
+        //printf("Particle %d:\n \tFMM potential = %f, brute-force potential = %f, error = %e\n\n",
+        //       i, particles[i].p, particles_bf[i].p, fabsf(particles[i].p - particles_bf[i].p));
     }
     printf("Maximum error between FMM and brute-force potentials: %e\n", max_error);
 
