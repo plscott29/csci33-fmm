@@ -47,7 +47,12 @@ int main(int argc, char * argv[]) {
         return 1;
     }
 
-    // compare potentials from FMM and direct calculations
+    // compare potentials from FMM and direct calculations normalized by  A=max(|p|) across all particles
+    float A = 0.0f;
+    for (int i = 0; i < num_particles; i++) {
+        A += fabsf(particles_fmm[i].q);  // charge is the same across FMM and direct
+    }
+
     float max_error = 0.0f;
     for (int i = 0; i < num_particles; i++) {
         float error = fabsf(particles_fmm[i].p - particles_direct[i].p);
@@ -55,7 +60,9 @@ int main(int argc, char * argv[]) {
             max_error = error;
         }
     }
-    printf("Maximum error between FMM and brute-force potentials: %e\n", max_error);
+    
+    float epsilon = max_error / A;
+    printf("Relative precision epslon between FMM and direct calculations: %.5e\n", epsilon);
 
     // free allocated memory
     free(particles_fmm);
