@@ -5,17 +5,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
+#include "common.h"
 
 
-/* Define structs: Particle, Node, Partition */
-typedef struct {
-    float complex z;
-    float x;
-    float y;
-    int q;
-    float p;
-} Particle;
-
+/* Define structs: Node, Partition */
 typedef struct {
     int level;
     int start;
@@ -972,22 +965,6 @@ int evaluate_potentials_parallel(Particle *particles, Node *nodes, int num_parti
     return 0;
 }
 
-int brute_force(Particle *particles, int num_particles) {
-    for (int p_idx = 0; p_idx < num_particles; p_idx++) {
-        Particle *p = &particles[p_idx];
-        p->p = 0.0f;
-        for (int q_idx = 0; q_idx < num_particles; q_idx++) {
-            if (p_idx != q_idx) {
-                Particle q = particles[q_idx];
-                float complex offset = p->z - q.z;
-                p->p += crealf(q.q * clogf(offset));
-            }
-        }
-    }
-    return 0;
-}
-
-
 /* intended usage:
     ./fmm <input_file> <output_file> <num_levels> <p> <num_particles> <is_parallel> <num_threads>
 */
@@ -1027,29 +1004,11 @@ int main(int argc, char * argv[])
         return 1;
     }
 
-    FILE *fp = fopen(input_file, "r");
-    if (fp == NULL) {
-        fprintf(stderr, "Error opening input file: %s\n", input_file);
+    if (read_particles_from_file(input_file, particles, num_particles) != 0) {
+        fprintf(stderr, "Error reading particles from file\n");
         free(particles);
         return 1;
     }
-
-    // read file + populate particles
-    for (int i = 0; i < num_particles; i++) {
-        float x, y;
-        int q;
-        if (fscanf(fp, "%f,%f,%d", &x, &y, &q) != 3) {
-            fprintf(stderr, "Error reading particle data from file: %s\n", input_file);
-            free(particles);
-            fclose(fp);
-            return 1;
-        }
-        particles[i].z = x + y*I;
-        particles[i].x = x;
-        particles[i].y = y;
-        particles[i].q = q;
-    }
-    fclose(fp);
 
     // allocate memory for tree structure: \sum_{l=0}^{num_levels} 4^l
     int num_nodes = level_start_idx(num_levels+1);
@@ -1180,27 +1139,30 @@ int main(int argc, char * argv[])
             return 1;
         }
     }
-    
-    // brute force calculation of particle-wise potentials (on copied particles
-    // array so as not to overwrite FMM results)
-    Particle * particles_bf = (Particle *)malloc(num_particles * sizeof(Particle));
-    memcpy(particles_bf, particles, num_particles * sizeof(Particle));
-    brute_force(particles_bf, num_particles);
 
-    // compare brute-force and FMM results!
-    float max_error = 0.0f;
-    for (int i = 0; i < num_particles; i++) {
-        float error = fabsf(particles[i].p - particles_bf[i].p);
-        if (error > max_error) {
-            max_error = error;
-        }
-        //printf("Particle %d:\n \tFMM potential = %f, brute-force potential = %f, error = %e\n\n",
-        //       i, particles[i].p, particles_bf[i].p, fabsf(particles[i].p - particles_bf[i].p));
+    // write results to output file
+    if (write_particles_to_file(output_file, particles, num_particles) != 0) {
+        fprintf(stderr, "Error writing particles to file\n");
+        free(particles);
+        free(expansions_block);
+        free(nodes);
+        return 1;
     }
-    printf("Maximum error between FMM and brute-force potentials: %e\n", max_error);
+
+    // TODO: perform comparison in a separate file!
+    // compare brute-force and FMM results!
+    // float max_error = 0.0f;
+    // for (int i = 0; i < num_particles; i++) {
+    //     float error = fabsf(particles[i].p - particles_bf[i].p);
+    //     if (error > max_error) {
+    //         max_error = error;
+    //     }
+    //     //printf("Particle %d:\n \tFMM potential = %f, brute-force potential = %f, error = %e\n\n",
+    //     //       i, particles[i].p, particles_bf[i].p, fabsf(particles[i].p - particles_bf[i].p));
+    // }
+    // printf("Maximum error between FMM and brute-force potentials: %e\n", max_error);
 
     free(particles);
-    free(particles_bf);
     free(expansions_block);
     free(nodes);
     return 0;
