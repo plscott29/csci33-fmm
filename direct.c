@@ -52,7 +52,7 @@ int main(int argc, char * argv[]) {
         return 1;
     }
 
-    if (read_particles_from_file(input_file, particles, num_particles) != 0) {
+    if (read_particles_from_input_file(input_file, particles, num_particles) != 0) {
         fprintf(stderr, "Error reading particles from file\n");
         free(particles);
         return 1;

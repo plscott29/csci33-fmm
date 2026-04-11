@@ -27,7 +27,7 @@ int main(int argc, char * argv[]) {
         return 1;
     }
 
-    if (read_particles_from_file(fmm_output_file, particles_fmm, num_particles) != 0) {
+    if (read_particles_from_output_file(fmm_output_file, particles_fmm, num_particles) != 0) {
         fprintf(stderr, "Error reading particles from file\n");
         free(particles_fmm);
         return 1;
@@ -40,7 +40,7 @@ int main(int argc, char * argv[]) {
         free(particles_fmm);
         return 1;
     }
-    if (read_particles_from_file(direct_output_file, particles_direct, num_particles) != 0) {
+    if (read_particles_from_output_file(direct_output_file, particles_direct, num_particles) != 0) {
         fprintf(stderr, "Error reading direct particles from file\n");
         free(particles_fmm);
         free(particles_direct);
