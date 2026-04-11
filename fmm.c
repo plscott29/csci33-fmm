@@ -1149,19 +1149,6 @@ int main(int argc, char * argv[])
         return 1;
     }
 
-    // TODO: perform comparison in a separate file!
-    // compare brute-force and FMM results!
-    // float max_error = 0.0f;
-    // for (int i = 0; i < num_particles; i++) {
-    //     float error = fabsf(particles[i].p - particles_bf[i].p);
-    //     if (error > max_error) {
-    //         max_error = error;
-    //     }
-    //     //printf("Particle %d:\n \tFMM potential = %f, brute-force potential = %f, error = %e\n\n",
-    //     //       i, particles[i].p, particles_bf[i].p, fabsf(particles[i].p - particles_bf[i].p));
-    // }
-    // printf("Maximum error between FMM and brute-force potentials: %e\n", max_error);
-
     free(particles);
     free(expansions_block);
     free(nodes);
