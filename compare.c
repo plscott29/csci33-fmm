@@ -4,44 +4,44 @@
 #include "common.h"
 
 /* intended usage:
-    ./compare <fmm_output_file> <direct_output_file> <num_particles>
+    ./compare <output_file1> <output_file2> <num_particles>
 */
 int main(int argc, char * argv[]) {
     // read inputs from command line
     if (argc < 4) {
-        fprintf(stderr, "Usage: %s <fmm_output_file> <direct_output_file> <num_particles>\n", argv[0]);
-        fprintf(stderr, "fmm_output_file: path to the FMM output file containing particle data\n");
-        fprintf(stderr, "direct_output_file: path to the direct output file where results will be written\n");
+        fprintf(stderr, "Usage: %s <output_file1> <output_file2> <num_particles>\n", argv[0]);
+        fprintf(stderr, "output_file1: path to the first output file containing particle data\n");
+        fprintf(stderr, "output_file2: path to the second output file containing particle data\n");
         fprintf(stderr, "num_particles: number of particles\n");
         return 1;
     }
 
-    char *fmm_output_file = argv[1];
-    char *direct_output_file = argv[2];
+    char *output_file1 = argv[1];
+    char *output_file2 = argv[2];
     int num_particles = atoi(argv[3]);
 
-    // read particle data from FMM output file
+    // read particle data from the first output file
     Particle *particles_fmm = (Particle *)malloc(num_particles * sizeof(Particle));
     if (particles_fmm == NULL) {
         fprintf(stderr, "Error allocating memory for particles\n");
         return 1;
     }
 
-    if (read_particles_from_output_file(fmm_output_file, particles_fmm, num_particles) != 0) {
+    if (read_particles_from_output_file(output_file1, particles_fmm, num_particles) != 0) {
         fprintf(stderr, "Error reading particles from file\n");
         free(particles_fmm);
         return 1;
     }
 
-    // read particle data from direct output file to compare against FMM results
+    // read particle data from the second output file to compare against the first output file
     Particle *particles_direct = (Particle *)malloc(num_particles * sizeof(Particle));
     if (particles_direct == NULL) {
         fprintf(stderr, "Error allocating memory for direct particles\n");
         free(particles_fmm);
         return 1;
     }
-    if (read_particles_from_output_file(direct_output_file, particles_direct, num_particles) != 0) {
-        fprintf(stderr, "Error reading direct particles from file\n");
+    if (read_particles_from_output_file(output_file2, particles_direct, num_particles) != 0) {
+        fprintf(stderr, "Error reading particles from file\n");
         free(particles_fmm);
         free(particles_direct);
         return 1;
@@ -62,7 +62,7 @@ int main(int argc, char * argv[]) {
     }
     
     float epsilon = max_error / A;
-    printf("Relative precision epslon between FMM and direct calculations: %.5e\n", epsilon);
+    printf("Relative precision epslon between %s and %s: %.5e\n", output_file1, output_file2, epsilon);
 
     // free allocated memory
     free(particles_fmm);
