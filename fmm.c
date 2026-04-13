@@ -1051,7 +1051,7 @@ int main(int argc, char * argv[])
         omp_set_num_threads(num_threads);
         
         //printf("Running parallel version\n");
-        t_prev = omp_get_wtime();
+        //t_prev = omp_get_wtime();
         //printf("Starting tree construction\n");
        
         // run step 1: tree construction & sorting
@@ -1069,9 +1069,9 @@ int main(int argc, char * argv[])
             first_touch_initialization(&particles, nodes, num_particles, num_levels, P);
         }
 
-        t_next = omp_get_wtime();
+        //t_next = omp_get_wtime();
         //printf("Finished, time elapsed: %.5f\n", t_next-t_prev);
-        t_prev = omp_get_wtime();
+        //t_prev = omp_get_wtime();
         //printf("Starting multipole\n");
 
         // run step 2: calculate multipole expansions (upwards pass)
@@ -1083,9 +1083,9 @@ int main(int argc, char * argv[])
             return 1;
         }
 
-        t_next = omp_get_wtime();
+        //t_next = omp_get_wtime();
         //printf("Finished, time elapsed: %.5f\n", t_next-t_prev);
-        t_prev = omp_get_wtime();
+        //t_prev = omp_get_wtime();
         //printf("Starting local\n");
 
         // run step 3: calculate local expansions (downwards pass)
@@ -1097,9 +1097,9 @@ int main(int argc, char * argv[])
             return 1;
         }
 
-        t_next = omp_get_wtime();
+        //t_next = omp_get_wtime();
         //printf("Finished, time elapsed: %.5f\n", t_next-t_prev);
-        t_prev = omp_get_wtime();
+        //t_prev = omp_get_wtime();
         //printf("Starting particle potentials\n");
 
         // run step 4: evaluate potentials at every leaf node
@@ -1111,7 +1111,7 @@ int main(int argc, char * argv[])
             return 1;
         }
 
-        t_next = omp_get_wtime();
+        //t_next = omp_get_wtime();
         //printf("Finished, time elapsed: %.5f\n", t_next-t_prev);
     } else { // sequential execution
         // run step 1: tree construction & sorting

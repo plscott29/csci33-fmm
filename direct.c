@@ -99,6 +99,7 @@ int compute_direct_potentials(Particle *particles, int num_particles) {
     ./direct <input_file> <output_file> <num_particles> <is_parallel> <num_threads>
 */
 int main(int argc, char * argv[]) {
+    double t_0 = omp_get_wtime();
     // read inputs from command line
     if (argc < 6) {
         fprintf(stderr, "Usage: %s <input_file> <output_file> <num_particles> <is_parallel> <num_threads>\n", argv[0]);
@@ -135,6 +136,9 @@ int main(int argc, char * argv[]) {
     } else {
         compute_direct_potentials(particles, num_particles);
     }
+
+    double t_final = omp_get_wtime();
+    printf("Total time elapsed: %.5f\n", t_final - t_0);
 
     // write results to output file
     if (write_particles_to_output_file(output_file, particles, num_particles) != 0) {
