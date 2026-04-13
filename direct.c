@@ -135,7 +135,7 @@ int main(int argc, char * argv[]) {
     }
 
     // write results to output file
-    if (write_particles_to_file(output_file, particles, num_particles) != 0) {
+    if (write_particles_to_output_file(output_file, particles, num_particles) != 0) {
         fprintf(stderr, "Error writing particles to file\n");
         free(particles);
         return 1;

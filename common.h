@@ -75,7 +75,7 @@ static int compare_particles(const void *a, const void *b) {
     return 0; // particles are at the same position
 }
 
-static int write_particles_to_file(const char *output_file, Particle *particles, int num_particles) {
+static int write_particles_to_output_file(const char *output_file, Particle *particles, int num_particles) {
     // sort particles by x-coordinate then y-coordinate to ensure easy reading and comparison across files
     qsort(particles, num_particles, sizeof(Particle), compare_particles);
 
@@ -86,9 +86,24 @@ static int write_particles_to_file(const char *output_file, Particle *particles,
     }
 
     for (int i = 0; i < num_particles; i++) {
-        fprintf(fp, "%f,%f,%d,%f\n", particles[i].x, particles[i].y, particles[i].q, particles[i].p);
+        fprintf(fp, "%.8f,%.8f,%d,%.8f\n", particles[i].x, particles[i].y, particles[i].q, particles[i].p);
     }
-{}
+
+    fclose(fp);
+    return 0;
+}
+
+static int write_particles_to_data_file(const char *output_file, Particle *particles, int num_particles) {
+    FILE *fp = fopen(output_file, "w");
+    if (fp == NULL) {
+        fprintf(stderr, "Error opening output file: %s\n", output_file);
+        return 1;
+    }
+
+    for (int i = 0; i < num_particles; i++) {
+        fprintf(fp, "%.8f,%.8f,%d\n", particles[i].x, particles[i].y, particles[i].q);
+    }
+
     fclose(fp);
     return 0;
 }
