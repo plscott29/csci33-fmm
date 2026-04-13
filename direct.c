@@ -11,7 +11,8 @@ int compute_direct_potentials_parallel(Particle *particles, int num_particles, i
     /* parallelize direct potential calculation using OpenMP, Newton's 3rd Law, and memory tiling */
     omp_set_num_threads(num_threads);
 
-    int num_tiles = ceil((float) num_particles / TILE_SIZE);
+    int num_tiles = (int)ceil((float) num_particles / TILE_SIZE);
+    if (num_tiles % 2 != 0) num_tiles++; // round-robin requires even tile count
 
     // initialize potentials to 0 for each particle
     #pragma omp parallel for
@@ -43,15 +44,16 @@ int compute_direct_potentials_parallel(Particle *particles, int num_particles, i
     // off-diagonal tiles (parallelize over tiles, but not within tiles)
     for (int r = 0; r < num_tiles - 1; r++) {
         #pragma omp parallel for
-        for (int s = 0; s < num_tiles / 2; s++) {
+        for (int s = 0; s < (num_tiles + 1) / 2; s++) {
             int ti, tj;
 
             if (s == 0) { // slot 0: (T-1, r)
                 ti = num_tiles - 1;
                 tj = r;
-            } else { // slot 1: (r+1, T-2), generally: ((r+s) % (T-1), (r-s+T-1) % (T-1))
+            } else { // generally: ((r+s) % (T-1), (r-s+T-1) % (T-1))
                 ti = (r + s) % (num_tiles-1);
-                tj = (r + num_tiles - s) % (num_tiles-1);
+                tj = (r + num_tiles - 1 - s) % (num_tiles-1);
+                if (ti == tj) continue; // self-pair when num_tiles is odd and s == (num_tiles-1)/2
             }
 
             // process tile pair (ti, tj) with Newton's 3rd Law
