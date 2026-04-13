@@ -5,16 +5,13 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
+#include "common.h"
 
-/* Define structs: Particle, Node, Partition */
-typedef struct {
-    float complex z;
-    float x;
-    float y;
-    int q;
-    float p;
-} Particle;
+// minimum nodes per thread, and thus minimum level, to justify parallelization overhead
+#define MIN_NODES_PER_THREAD 128
+#define PARALLEL_THRESHOLD_LEVEL(num_threads) ((int) ceil(log(MIN_NODES_PER_THREAD * (num_threads)) / log(4)))
 
+/* Define structs: Node, Partition */
 typedef struct {
     int level;
     int start;
@@ -319,13 +316,14 @@ WellSeparated get_well_separated(Node *nodes, int node_idx) {
         - nodes: pre-allocated array of tree nodes
         - num_particles: number of particles
         - num_levels: depth of the tree
+        - P: number of terms in multipole expansion
     output:
         - returns 0 on success, non-zero on failure
 
     In-place sort input array of particles and populate every node
     in the tree with (i) idx, (ii) level, (iii) start, and (iv) end.
 */
-int construct_tree(Particle *particles, Node *nodes, int num_particles, int num_levels)
+int construct_tree(Particle *particles, Node *nodes, int num_particles, int num_levels, int P)
 {
     // initialize root node
     Node *root = &nodes[0];                 // TODO: optimize by not storing root?
@@ -333,6 +331,9 @@ int construct_tree(Particle *particles, Node *nodes, int num_particles, int num_
     root->start = 0; root->end = num_particles-1;
     root->x_mid = 0.5; root->y_mid = 0.5;   // TODO: parameterize bounding box?
     root->z_mid = 0.5 + 0.5*I;
+
+    // initialize expansions to 0 for root node
+    memset(root->expansions, 0, 2 * P * sizeof(float complex));
 
     // set the rest of the levels
     int p_idx = 0;
@@ -362,6 +363,9 @@ int construct_tree(Particle *particles, Node *nodes, int num_particles, int num_
                 nodes[c_idx + q].x_mid = nodes[p_idx].x_mid + x_mid_shifts[q];
                 nodes[c_idx + q].y_mid = nodes[p_idx].y_mid + y_mid_shifts[q];
                 nodes[c_idx + q].z_mid = nodes[c_idx + q].x_mid + nodes[c_idx + q].y_mid*I;
+                
+                // initialize expansions to 0 for each child node
+                memset(nodes[c_idx + q].expansions, 0, 2 * P * sizeof(float complex));
             }
 
             p_idx++;
@@ -369,18 +373,11 @@ int construct_tree(Particle *particles, Node *nodes, int num_particles, int num_
 
         num_boxes = num_boxes*4;
     }
-
-    // TODO: use first touch placement to copy particles into new array such that each leaf node's particles
-    // are stored in memory close to where threads would access them in later computations (NUMA)
-
-    // TODO: use first touch placement to initialize the expansions array chunks for each node such that
-    // they are stored in memory close to where threads would access them in later computations (NUMA)
-
     return 0;
 }
 
 
-int construct_tree_parallel(Particle *particles, Node *nodes, int num_particles, int num_levels)
+int construct_tree_parallel(Particle *particles, Node *nodes, int num_particles, int num_levels, int P, int first_touch)
 {
     // initialize root node
     Node *root = &nodes[0];                 // TODO: optimize by not storing root?
@@ -388,6 +385,9 @@ int construct_tree_parallel(Particle *particles, Node *nodes, int num_particles,
     root->start = 0; root->end = num_particles-1;
     root->x_mid = 0.5; root->y_mid = 0.5;   // TODO: parameterize bounding box?
     root->z_mid = 0.5 + 0.5*I;
+
+    // initialize expansions to 0 for root node
+    memset(root->expansions, 0, 2 * P * sizeof(float complex));
 
     // set the rest of the levels
     int p_idx = 0;
@@ -404,7 +404,7 @@ int construct_tree_parallel(Particle *particles, Node *nodes, int num_particles,
 
             // set four nodes corresponding to the four quadrants of this parent node
             c_idx = child_idx(p_idx);
-            //printf("Level: %d, Parent: %d, Child: %d, Thread: %d\n", level, p_idx, c_idx, omp_get_thread_num());
+
             // calculate offset from parent midpoint to child midpoint:
             // shift = (1/2^(level+1)) / 2 = 1/2^(level+2)
             float shift = 1.0 / pow(2, level+2);
@@ -420,6 +420,11 @@ int construct_tree_parallel(Particle *particles, Node *nodes, int num_particles,
                 nodes[c_idx + q].x_mid = nodes[p_idx].x_mid + x_mid_shifts[q];
                 nodes[c_idx + q].y_mid = nodes[p_idx].y_mid + y_mid_shifts[q];
                 nodes[c_idx + q].z_mid = nodes[c_idx + q].x_mid + nodes[c_idx + q].y_mid*I;
+                
+                if (!first_touch) {
+                    // initialize expansions to 0 for each child node
+                    memset(nodes[c_idx + q].expansions, 0, 2 * P * sizeof(float complex));
+                }
             }
         }
         num_boxes = num_boxes*4;
@@ -427,6 +432,48 @@ int construct_tree_parallel(Particle *particles, Node *nodes, int num_particles,
     return 0;
 }
 
+int first_touch_initialization(Particle **particles, Node *nodes, int num_particles, int num_levels, int P) {
+    // initialize expansions to 0 for each child node using first touch placement
+    // mirroring computation access pattern level-by-level
+    
+    // level 1: first touch placement on main thread
+    for (int i = 0; i < 4; i++) {
+        memset(nodes[child_idx(0) + i].expansions, 0, 2 * P * sizeof(float complex));
+    }
+
+    // all other levels: mirror computation access pattern with parallel loop
+    for (int l = 2; l <= num_levels; l++) {
+        int nodes_in_level = pow(4, l);
+        int start_idx = level_start_idx(l);
+        #pragma omp parallel for
+        for (int i = 0; i < nodes_in_level; i++) {
+            int node_idx = start_idx + i;
+            memset(nodes[node_idx].expansions, 0, 2 * P * sizeof(float complex));
+        }
+    }
+
+    // copy particles into new array such that each leaf node's particles are stored
+    // in memory close to where threads will access them in later computations
+    Particle *particles_copy = (Particle *)malloc(num_particles * sizeof(Particle));
+    if (particles_copy == NULL) {
+        fprintf(stderr, "Error allocating memory for particles copy\n");
+        return -1;
+    }
+
+    int num_leaves = pow(4, num_levels);
+    int start_idx = level_start_idx(num_levels);
+    #pragma omp parallel for
+    for (int i = 0; i < num_leaves; i++) {
+        int leaf_idx = start_idx + i;
+        for (int p_idx = nodes[leaf_idx].start; p_idx <= nodes[leaf_idx].end; p_idx++) {
+            particles_copy[p_idx] = (*particles)[p_idx];
+        }
+    }
+    free(*particles);
+    *particles = particles_copy;
+    
+    return 0;
+}
 
 /*
     input:
@@ -704,13 +751,11 @@ int calculate_multipole_parallel(Particle *particles, Node *nodes, int num_parti
 
     // compute multipole expansions for all non-leaf nodes: "outgoing from outgoing"
     // iterate over all non-leaf nodes in reverse order (from bottom of tree up to root)
-    //for (int i = (num_nodes - num_leaves) - 1; i > 0; i--) {
-    //    ofo(nodes, i, P, binom);
-    //}
-
     for (int l = num_levels-1; l > 0; l--) {
         int start_idx = level_start_idx(l); int stop_idx = level_start_idx(l+1);
-        if (l >= 5) {
+
+        // only run in parallel above a certain threshold of nodes in level
+        if (l >= PARALLEL_THRESHOLD_LEVEL(omp_get_max_threads())) {
             #pragma omp parallel for
             for (int i = start_idx; i < stop_idx; i++) {
                 ofo(nodes, i, P, binom);
@@ -787,17 +832,22 @@ int calculate_local_parallel(Particle *particles, Node *nodes, int num_particles
         int nodes_in_level = pow(4, l);
         int level_start_idx = (pow(4, l) - 1) / 3;
 
-        // TODO: only run this in parallel above a certain threshold of nodes in level
-        // since there is overhead to parallelization and levels with very few nodes
-        // may not benefit from parallelization
-
-        #pragma omp parallel for
-        for (int i = 0; i < nodes_in_level; i++) {
-            int node_idx = level_start_idx + i;
-            ifi(nodes, node_idx, P, binom);
-            ifo(nodes, node_idx, P);
+        // only run in parallel above a certain threshold of nodes in level
+        if (l >= PARALLEL_THRESHOLD_LEVEL(omp_get_max_threads())) {
+            #pragma omp parallel for
+            for (int i = 0; i < nodes_in_level; i++) {
+                int node_idx = level_start_idx + i;
+                ifi(nodes, node_idx, P, binom);
+                ifo(nodes, node_idx, P);
+            } // implicit barrier: all threads must finish processing level l before level l+1
         }
-        // implicit barrier: all threads must finish processing level l before level l+1
+        else {
+            for (int i = 0; i < nodes_in_level; i++) {
+                int node_idx = level_start_idx + i;
+                ifi(nodes, node_idx, P, binom);
+                ifo(nodes, node_idx, P);
+            }
+        }
     }
 
     free(binom);
@@ -921,33 +971,16 @@ int evaluate_potentials_parallel(Particle *particles, Node *nodes, int num_parti
     return 0;
 }
 
-int brute_force(Particle *particles, int num_particles) {
-    for (int p_idx = 0; p_idx < num_particles; p_idx++) {
-        Particle *p = &particles[p_idx];
-        p->p = 0.0f;
-        for (int q_idx = 0; q_idx < num_particles; q_idx++) {
-            if (p_idx != q_idx) {
-                Particle q = particles[q_idx];
-                float complex offset = p->z - q.z;
-                p->p += crealf(q.q * clogf(offset));
-            }
-        }
-    }
-    return 0;
-}
-
-
 /* intended usage:
     ./fmm <input_file> <output_file> <num_levels> <p> <num_particles> <is_parallel> <num_threads>
 */
 int main(int argc, char * argv[])
 {
-    double t_0 = omp_get_wtime();
     double t_prev;
     double t_next;
     // read inputs from command line
-    if (argc != 8) {
-        fprintf(stderr, "Usage: %s <input_file> <output_file> <num_levels> <p> <num_particles> <is_parallel> <num_threads>\n", argv[0]);
+    if (argc < 8 || argc > 9) {
+        fprintf(stderr, "Usage: %s <input_file> <output_file> <num_levels> <p> <num_particles> <is_parallel> <num_threads> [first_touch]\n", argv[0]);
         fprintf(stderr, "input_file: path to the input file containing particle data\n");
         fprintf(stderr, "output_file: path to the output file where results will be written\n");
         fprintf(stderr, "num_levels: depth of FMM expansion tree\n");
@@ -955,6 +988,7 @@ int main(int argc, char * argv[])
         fprintf(stderr, "num_particles: number of particles\n");
         fprintf(stderr, "is_parallel: whether to run in parallel (1) or sequential (0)\n");
         fprintf(stderr, "num_threads: number of threads to use\n");
+        fprintf(stderr, "first_touch: (optional) whether to use first touch placement (1, default) or not (0)\n");
         return 1;
     }
 
@@ -966,6 +1000,9 @@ int main(int argc, char * argv[])
     int is_parallel = atoi(argv[6]);
     int num_threads = atoi(argv[7]);
 
+    // whether to use first touch placement for parallel execution (defaults to 1)
+    int first_touch = (argc == 9) ? atoi(argv[8]) : 1;
+
     // read input particle data from file
     Particle *particles = (Particle *)malloc(num_particles * sizeof(Particle));
     if (particles == NULL) {
@@ -973,29 +1010,11 @@ int main(int argc, char * argv[])
         return 1;
     }
 
-    FILE *fp = fopen(input_file, "r");
-    if (fp == NULL) {
-        fprintf(stderr, "Error opening input file: %s\n", input_file);
+    if (read_particles_from_input_file(input_file, particles, num_particles) != 0) {
+        fprintf(stderr, "Error reading particles from file\n");
         free(particles);
         return 1;
     }
-
-    // read file + populate particles
-    for (int i = 0; i < num_particles; i++) {
-        float x, y;
-        int q;
-        if (fscanf(fp, "%f,%f,%d", &x, &y, &q) != 3) {
-            fprintf(stderr, "Error reading particle data from file: %s\n", input_file);
-            free(particles);
-            fclose(fp);
-            return 1;
-        }
-        particles[i].z = x + y*I;
-        particles[i].x = x;
-        particles[i].y = y;
-        particles[i].q = q;
-    }
-    fclose(fp);
 
     // allocate memory for tree structure: \sum_{l=0}^{num_levels} 4^l
     int num_nodes = level_start_idx(num_levels+1);
@@ -1007,93 +1026,94 @@ int main(int argc, char * argv[])
         free(particles);
         return 1;
     }
-    // TODO: consolidate allocations for expansions into a single large block to improve memory locality
-    for (int i=0; i < num_nodes; i++) {
-        nodes[i].expansions = (float complex *) calloc(2 * P, sizeof(float complex));
-        if (nodes[i].expansions == NULL) {
-            fprintf(stderr, "Error allocating memory for expansions of node %d\n", i);
-            for (int j = 0; j < i; j++) {
-                free(nodes[j].expansions);
-            }
-            free(nodes);
-            free(particles);
-            return 1;
-        }
+
+    // allocate space for expansions for all nodes in one contiguous block
+    float complex *expansions_block = (float complex *)malloc(num_nodes * 2 * P * sizeof(float complex));
+    if (expansions_block == NULL) {
+        fprintf(stderr, "Error allocating memory for expansions\n");
+        free(nodes);
+        free(particles);
+        return 1;
+    }
+
+    // set expansion pointers to point to appropriate locations in expansions block
+    for (int i = 0; i < num_nodes; i++) {
+        nodes[i].expansions = &expansions_block[i * 2 * P];
     }
 
     if (is_parallel) { // parallel execution
         // set # of threads for parallel execution
         omp_set_num_threads(num_threads);
+        
         printf("Running parallel version\n");
         t_prev = omp_get_wtime();
         printf("Starting tree construction\n");
+       
         // run step 1: tree construction & sorting
-        if (construct_tree_parallel(particles, nodes, num_particles, num_levels) != 0) {
-        //if (construct_tree(particles, nodes, num_particles, num_levels) != 0) {
+        if (construct_tree_parallel(particles, nodes, num_particles, num_levels, P, first_touch) != 0) {
             fprintf(stderr, "Error constructing tree\n");
             free(particles);
-            for (int i = 0; i < num_nodes; i++) {
-                free(nodes[i].expansions);
-            }
+            free(expansions_block);
             free(nodes);
             return 1;
         }
+        
+        // if using first touch, run an additional initialization step after tree construction to ensure memory
+        // is placed close to where threads will access it in later computations
+        if (first_touch) {
+            first_touch_initialization(&particles, nodes, num_particles, num_levels, P);
+        }
+
         t_next = omp_get_wtime();
         printf("Finished, time elapsed: %.5f\n", t_next-t_prev);
-
         t_prev = omp_get_wtime();
         printf("Starting multipole\n");
+
         // run step 2: calculate multipole expansions (upwards pass)
         if (calculate_multipole_parallel(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
             fprintf(stderr, "Error calculating multipole expansions\n");
             free(particles);
-            for (int i = 0; i < num_nodes; i++) {
-                free(nodes[i].expansions);
-            }
+            free(expansions_block);
             free(nodes);
             return 1;
         }
+
         t_next = omp_get_wtime();
         printf("Finished, time elapsed: %.5f\n", t_next-t_prev);
-
         t_prev = omp_get_wtime();
         printf("Starting local\n");
+
         // run step 3: calculate local expansions (downwards pass)
         if (calculate_local_parallel(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
             fprintf(stderr, "Error calculating local expansions\n");
             free(particles);
-            for (int i = 0; i < num_nodes; i++) {
-                free(nodes[i].expansions);
-            }
+            free(expansions_block);
             free(nodes);
             return 1;
         }
+
         t_next = omp_get_wtime();
         printf("Finished, time elapsed: %.5f\n", t_next-t_prev);
-
-
         t_prev = omp_get_wtime();
         printf("Starting particle potentials\n");
+
         // run step 4: evaluate potentials at every leaf node
         if (evaluate_potentials_parallel(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
             fprintf(stderr, "Error evaluating potentials at leaf nodes\n");
             free(particles);
-            for (int i = 0; i < num_nodes; i++) {
-                free(nodes[i].expansions);
-            }
+            free(expansions_block);
             free(nodes);
             return 1;
         }
+
         t_next = omp_get_wtime();
         printf("Finished, time elapsed: %.5f\n", t_next-t_prev);
     } else { // sequential execution
         // run step 1: tree construction & sorting
-        if (construct_tree(particles, nodes, num_particles, num_levels) != 0) {
+        if (construct_tree(particles, nodes, num_particles, num_levels, P) != 0) {
             fprintf(stderr, "Error constructing tree\n");
             free(particles);
-            for (int i = 0; i < num_nodes; i++) {
-                free(nodes[i].expansions);
-            }
+            free(expansions_block);
             free(nodes);
             return 1;
         }
@@ -1102,9 +1122,7 @@ int main(int argc, char * argv[])
         if (calculate_multipole(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
             fprintf(stderr, "Error calculating multipole expansions\n");
             free(particles);
-            for (int i = 0; i < num_nodes; i++) {
-                free(nodes[i].expansions);
-            }
+            free(expansions_block);
             free(nodes);
             return 1;
         }
@@ -1113,9 +1131,7 @@ int main(int argc, char * argv[])
         if (calculate_local(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
             fprintf(stderr, "Error calculating local expansions\n");
             free(particles);
-            for (int i = 0; i < num_nodes; i++) {
-                free(nodes[i].expansions);
-            }
+            free(expansions_block);
             free(nodes);
             return 1;
         }
@@ -1124,37 +1140,23 @@ int main(int argc, char * argv[])
         if (evaluate_potentials(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
             fprintf(stderr, "Error evaluating potentials at leaf nodes\n");
             free(particles);
-            for (int i = 0; i < num_nodes; i++) {
-                free(nodes[i].expansions);
-            }
+            free(expansions_block);
             free(nodes);
             return 1;
         }
     }
-    
-    // brute force calculation of particle-wise potentials (on copied particles
-    // array so as not to overwrite FMM results)
-    Particle * particles_bf = (Particle *)malloc(num_particles * sizeof(Particle));
-    memcpy(particles_bf, particles, num_particles * sizeof(Particle));
-    brute_force(particles_bf, num_particles);
 
-    // compare brute-force and FMM results!
-    float max_error = 0.0f;
-    for (int i = 0; i < num_particles; i++) {
-        float error = fabsf(particles[i].p - particles_bf[i].p);
-        if (error > max_error) {
-            max_error = error;
-        }
-        //printf("Particle %d:\n \tFMM potential = %f, brute-force potential = %f, error = %e\n\n",
-        //       i, particles[i].p, particles_bf[i].p, fabsf(particles[i].p - particles_bf[i].p));
+    // write results to output file
+    if (write_particles_to_output_file(output_file, particles, num_particles) != 0) {
+        fprintf(stderr, "Error writing particles to file\n");
+        free(particles);
+        free(expansions_block);
+        free(nodes);
+        return 1;
     }
-    printf("Maximum error between FMM and brute-force potentials: %e\n", max_error);
 
     free(particles);
-    free(particles_bf);
-    for (int i = 0; i < num_nodes; i++) {
-        free(nodes[i].expansions);
-    }
+    free(expansions_block);
     free(nodes);
     return 0;
 }
