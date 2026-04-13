@@ -176,6 +176,7 @@ int search_for_neighbor(Node *nodes, int node_idx, DIRECTION direction, float di
             while (test_idx <= idx_upper_bound) {
                 jump_idx = pow(4, iteration)-level_start_idx(iteration); // +4-1=3, +16-4-1=11, +64-16-4-1=43, etc.
                 test_idx = node_idx + jump_idx; // we want to see if this node is the north neighbor
+                if (test_idx > idx_upper_bound) {break;}
                 test_y_dist = cimag(nodes[test_idx].z_mid - nodes[node_idx].z_mid);
                 ratio = test_y_dist/distance;
                 aligned = creal(nodes[test_idx].z_mid) == creal(nodes[node_idx].z_mid);
@@ -188,6 +189,7 @@ int search_for_neighbor(Node *nodes, int node_idx, DIRECTION direction, float di
             while (test_idx >= idx_lower_bound) {
                 jump_idx = pow(4, iteration)-level_start_idx(iteration);
                 test_idx = node_idx - jump_idx;
+                if (test_idx < idx_lower_bound) {break;}
                 test_y_dist = cimag(nodes[node_idx].z_mid - nodes[test_idx].z_mid);
                 ratio = test_y_dist/distance;
                 aligned = creal(nodes[test_idx].z_mid) == creal(nodes[node_idx].z_mid);
@@ -200,6 +202,7 @@ int search_for_neighbor(Node *nodes, int node_idx, DIRECTION direction, float di
             while (test_idx <= idx_upper_bound) {
                 jump_idx = 2*(pow(4, iteration)-level_start_idx(iteration));
                 test_idx = node_idx + jump_idx;
+                if (test_idx > idx_upper_bound) { break;}
                 test_x_dist = creal(nodes[test_idx].z_mid - nodes[node_idx].z_mid);
                 ratio = test_x_dist/distance;
                 aligned = cimag(nodes[test_idx].z_mid) == cimag(nodes[node_idx].z_mid);
@@ -212,6 +215,7 @@ int search_for_neighbor(Node *nodes, int node_idx, DIRECTION direction, float di
             while (test_idx >= idx_lower_bound) {
                 jump_idx = 2*(pow(4, iteration)-level_start_idx(iteration));
                 test_idx = node_idx - jump_idx;
+                if (test_idx < idx_lower_bound) {break;}
                 test_x_dist = creal(nodes[node_idx].z_mid - nodes[test_idx].z_mid);
                 ratio = test_x_dist/distance;
                 aligned = cimag(nodes[test_idx].z_mid) == cimag(nodes[node_idx].z_mid);
@@ -976,6 +980,7 @@ int evaluate_potentials_parallel(Particle *particles, Node *nodes, int num_parti
 */
 int main(int argc, char * argv[])
 {
+    double t_0 = omp_get_wtime();
     double t_prev;
     double t_next;
     // read inputs from command line
@@ -1158,5 +1163,7 @@ int main(int argc, char * argv[])
     free(particles);
     free(expansions_block);
     free(nodes);
+    double t_final = omp_get_wtime();
+    printf("Total time elapsed: %.5f\n", t_final - t_0);
     return 0;
 }
