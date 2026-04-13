@@ -7,6 +7,9 @@
 #include <stdbool.h>
 #include "common.h"
 
+// minimum nodes per thread, and thus minimum level, to justify parallelization overhead
+#define MIN_NODES_PER_THREAD 128
+#define PARALLEL_THRESHOLD_LEVEL(num_threads) ((int) ceil(log(MIN_NODES_PER_THREAD * (num_threads)) / log(4)))
 
 /* Define structs: Node, Partition */
 typedef struct {
@@ -401,7 +404,7 @@ int construct_tree_parallel(Particle *particles, Node *nodes, int num_particles,
 
             // set four nodes corresponding to the four quadrants of this parent node
             c_idx = child_idx(p_idx);
-            //printf("Level: %d, Parent: %d, Child: %d, Thread: %d\n", level, p_idx, c_idx, omp_get_thread_num());
+
             // calculate offset from parent midpoint to child midpoint:
             // shift = (1/2^(level+1)) / 2 = 1/2^(level+2)
             float shift = 1.0 / pow(2, level+2);
@@ -748,13 +751,11 @@ int calculate_multipole_parallel(Particle *particles, Node *nodes, int num_parti
 
     // compute multipole expansions for all non-leaf nodes: "outgoing from outgoing"
     // iterate over all non-leaf nodes in reverse order (from bottom of tree up to root)
-    //for (int i = (num_nodes - num_leaves) - 1; i > 0; i--) {
-    //    ofo(nodes, i, P, binom);
-    //}
-
     for (int l = num_levels-1; l > 0; l--) {
         int start_idx = level_start_idx(l); int stop_idx = level_start_idx(l+1);
-        if (l >= 5) {
+
+        // only run in parallel above a certain threshold of nodes in level
+        if (l >= PARALLEL_THRESHOLD_LEVEL(omp_get_max_threads())) {
             #pragma omp parallel for
             for (int i = start_idx; i < stop_idx; i++) {
                 ofo(nodes, i, P, binom);
@@ -831,17 +832,22 @@ int calculate_local_parallel(Particle *particles, Node *nodes, int num_particles
         int nodes_in_level = pow(4, l);
         int level_start_idx = (pow(4, l) - 1) / 3;
 
-        // TODO: only run this in parallel above a certain threshold of nodes in level
-        // since there is overhead to parallelization and levels with very few nodes
-        // may not benefit from parallelization
-
-        #pragma omp parallel for
-        for (int i = 0; i < nodes_in_level; i++) {
-            int node_idx = level_start_idx + i;
-            ifi(nodes, node_idx, P, binom);
-            ifo(nodes, node_idx, P);
+        // only run in parallel above a certain threshold of nodes in level
+        if (l >= PARALLEL_THRESHOLD_LEVEL(omp_get_max_threads())) {
+            #pragma omp parallel for
+            for (int i = 0; i < nodes_in_level; i++) {
+                int node_idx = level_start_idx + i;
+                ifi(nodes, node_idx, P, binom);
+                ifo(nodes, node_idx, P);
+            } // implicit barrier: all threads must finish processing level l before level l+1
         }
-        // implicit barrier: all threads must finish processing level l before level l+1
+        else {
+            for (int i = 0; i < nodes_in_level; i++) {
+                int node_idx = level_start_idx + i;
+                ifi(nodes, node_idx, P, binom);
+                ifo(nodes, node_idx, P);
+            }
+        }
     }
 
     free(binom);
