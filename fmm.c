@@ -9,7 +9,7 @@
 
 // minimum nodes per thread, and thus minimum level, to justify parallelization overhead
 #define MIN_NODES_PER_THREAD 128
-#define PARALLEL_THRESHOLD_LEVEL(num_threads) ((int) ceil(log(MIN_NODES_PER_THREAD * (num_threads)) / log(4)))
+#define TARGET_THREADS_PER_LEVEL(l) (int) (pow(4, l) / MIN_NODES_PER_THREAD)
 
 /* Define structs: Node, Partition */
 typedef struct {
@@ -756,11 +756,13 @@ int calculate_multipole_parallel(Particle *particles, Node *nodes, int num_parti
     // compute multipole expansions for all non-leaf nodes: "outgoing from outgoing"
     // iterate over all non-leaf nodes in reverse order (from bottom of tree up to root)
     for (int l = num_levels-1; l > 0; l--) {
-        int start_idx = level_start_idx(l); int stop_idx = level_start_idx(l+1);
+        int start_idx = level_start_idx(l);
+        int stop_idx = level_start_idx(l+1);
+        int threads_per_level = MAX(1, MIN(omp_get_max_threads(), TARGET_THREADS_PER_LEVEL(l)));
 
         // only run in parallel above a certain threshold of nodes in level
-        if (l >= PARALLEL_THRESHOLD_LEVEL(omp_get_max_threads())) {
-            #pragma omp parallel for
+        if (threads_per_level > 1) {
+            #pragma omp parallel for num_threads(threads_per_level)
             for (int i = start_idx; i < stop_idx; i++) {
                 ofo(nodes, i, P, binom);
             }
@@ -835,10 +837,11 @@ int calculate_local_parallel(Particle *particles, Node *nodes, int num_particles
     for (int l = 2; l <= num_levels; l++) {
         int nodes_in_level = pow(4, l);
         int level_start_idx = (pow(4, l) - 1) / 3;
+        int threads_per_level = MAX(1, MIN(omp_get_max_threads(), TARGET_THREADS_PER_LEVEL(l)));
 
         // only run in parallel above a certain threshold of nodes in level
-        if (l >= PARALLEL_THRESHOLD_LEVEL(omp_get_max_threads())) {
-            #pragma omp parallel for
+        if (threads_per_level > 1) {
+            #pragma omp parallel for num_threads(threads_per_level)
             for (int i = 0; i < nodes_in_level; i++) {
                 int node_idx = level_start_idx + i;
                 ifi(nodes, node_idx, P, binom);
