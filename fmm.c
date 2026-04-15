@@ -10,6 +10,8 @@
 // minimum nodes per to justify parallelization overhead and target threads per level
 #define MIN_NODES_PER_THREAD 128
 #define TARGET_THREADS_PER_LEVEL(l) (int) (pow(4, l) / MIN_NODES_PER_THREAD)
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
 
 /* Define structs: Node, Partition */
 typedef struct {
