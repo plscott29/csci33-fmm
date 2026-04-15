@@ -981,8 +981,7 @@ int evaluate_potentials_parallel(Particle *particles, Node *nodes, int num_parti
 int main(int argc, char * argv[])
 {
     double t_0 = omp_get_wtime();
-    double t_prev;
-    double t_next;
+
     // read inputs from command line
     if (argc < 8 || argc > 9) {
         fprintf(stderr, "Usage: %s <input_file> <output_file> <num_levels> <p> <num_particles> <is_parallel> <num_threads> [first_touch]\n", argv[0]);
@@ -1050,10 +1049,6 @@ int main(int argc, char * argv[])
         // set # of threads for parallel execution
         omp_set_num_threads(num_threads);
         
-        //printf("Running parallel version\n");
-        //t_prev = omp_get_wtime();
-        //printf("Starting tree construction\n");
-       
         // run step 1: tree construction & sorting
         if (construct_tree_parallel(particles, nodes, num_particles, num_levels, P, first_touch) != 0) {
             fprintf(stderr, "Error constructing tree\n");
@@ -1069,11 +1064,6 @@ int main(int argc, char * argv[])
             first_touch_initialization(&particles, nodes, num_particles, num_levels, P);
         }
 
-        //t_next = omp_get_wtime();
-        //printf("Finished, time elapsed: %.5f\n", t_next-t_prev);
-        //t_prev = omp_get_wtime();
-        //printf("Starting multipole\n");
-
         // run step 2: calculate multipole expansions (upwards pass)
         if (calculate_multipole_parallel(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
             fprintf(stderr, "Error calculating multipole expansions\n");
@@ -1082,11 +1072,6 @@ int main(int argc, char * argv[])
             free(nodes);
             return 1;
         }
-
-        //t_next = omp_get_wtime();
-        //printf("Finished, time elapsed: %.5f\n", t_next-t_prev);
-        //t_prev = omp_get_wtime();
-        //printf("Starting local\n");
 
         // run step 3: calculate local expansions (downwards pass)
         if (calculate_local_parallel(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
@@ -1097,11 +1082,6 @@ int main(int argc, char * argv[])
             return 1;
         }
 
-        //t_next = omp_get_wtime();
-        //printf("Finished, time elapsed: %.5f\n", t_next-t_prev);
-        //t_prev = omp_get_wtime();
-        //printf("Starting particle potentials\n");
-
         // run step 4: evaluate potentials at every leaf node
         if (evaluate_potentials_parallel(particles, nodes, num_particles, num_levels, num_nodes, P) != 0) {
             fprintf(stderr, "Error evaluating potentials at leaf nodes\n");
@@ -1110,9 +1090,6 @@ int main(int argc, char * argv[])
             free(nodes);
             return 1;
         }
-
-        //t_next = omp_get_wtime();
-        //printf("Finished, time elapsed: %.5f\n", t_next-t_prev);
     } else { // sequential execution
         // run step 1: tree construction & sorting
         if (construct_tree(particles, nodes, num_particles, num_levels, P) != 0) {
