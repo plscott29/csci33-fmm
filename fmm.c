@@ -16,8 +16,6 @@ typedef struct {
     int level;
     int start;
     int end;
-    float x_mid;
-    float y_mid;
     float complex z_mid;
     float complex *expansions; // to store local & multipole expansions, size determined by 2p
 } Node;
@@ -87,9 +85,9 @@ Partition four_sort(Particle *particles, Node *node) {
 
     // sort particles by x values first
     while (low <= high) {
-        if (particles[low].x <= node->x_mid) //if (creal(particles[low].z) <= creal(node->z_mid)) TODO: Remove x, y fields (only use z)
+        if (creal(particles[low].z) <= creal(node->z_mid)) //TODO: Remove x, y fields (only use z)
             low++;
-        else if (particles[high].x > node->x_mid) //else if (creal(particles[high].z) > creal(node->z_mid)) TODO: Remove x, y fields (only use z)
+        else if (creal(particles[high].z) > creal(node->z_mid)) //TODO: Remove x, y fields (only use z)
             high--;
         else {
             // swap particles at indices low & high 
@@ -110,9 +108,9 @@ Partition four_sort(Particle *particles, Node *node) {
     low = node->start;
     high = x_split - 1;
     while (low <= high) {
-        if (particles[low].y <= node->y_mid)
+        if (cimag(particles[low].z) <= cimag(node->z_mid))
             low++;
-        else if (particles[high].y > node->y_mid)
+        else if (cimag(particles[high].z) > cimag(node->z_mid))
             high--;
         else {
             tmp = particles[high];
@@ -131,9 +129,9 @@ Partition four_sort(Particle *particles, Node *node) {
     low = x_split;
     high = node->end;
     while (low <= high) {
-        if (particles[low].y <= node->y_mid)
+        if (cimag(particles[low].z) <= cimag(node->z_mid))
             low++;
-        else if (particles[high].y > node->y_mid)
+        else if (cimag(particles[high].z) > cimag(node->z_mid))
             high--;
         else {
             tmp = particles[high];
@@ -333,7 +331,6 @@ int construct_tree(Particle *particles, Node *nodes, int num_particles, int num_
     Node *root = &nodes[0];                 // TODO: optimize by not storing root?
     root->level = 0;
     root->start = 0; root->end = num_particles-1;
-    root->x_mid = 0.5; root->y_mid = 0.5;   // TODO: parameterize bounding box?
     root->z_mid = 0.5 + 0.5*I;
 
     // initialize expansions to 0 for root node
@@ -364,9 +361,11 @@ int construct_tree(Particle *particles, Node *nodes, int num_particles, int num_
                 nodes[c_idx + q].level = level+1;
                 nodes[c_idx + q].start = partitions.quadrant_bounds[q][0];
                 nodes[c_idx + q].end = partitions.quadrant_bounds[q][1];
-                nodes[c_idx + q].x_mid = nodes[p_idx].x_mid + x_mid_shifts[q];
-                nodes[c_idx + q].y_mid = nodes[p_idx].y_mid + y_mid_shifts[q];
-                nodes[c_idx + q].z_mid = nodes[c_idx + q].x_mid + nodes[c_idx + q].y_mid*I;
+                //nodes[c_idx + q].x_mid = nodes[p_idx].x_mid + x_mid_shifts[q];
+                //nodes[c_idx + q].y_mid = nodes[p_idx].y_mid + y_mid_shifts[q];
+                //nodes[c_idx + q].z_mid = nodes[c_idx + q].x_mid + nodes[c_idx + q].y_mid*I;
+                nodes[c_idx + q].z_mid = creal(nodes[p_idx].z_mid) + x_mid_shifts[q]
+                                        + cimag(nodes[p_idx].z_mid)*I + y_mid_shifts[q]*I;
                 
                 // initialize expansions to 0 for each child node
                 memset(nodes[c_idx + q].expansions, 0, 2 * P * sizeof(float complex));
@@ -387,7 +386,6 @@ int construct_tree_parallel(Particle *particles, Node *nodes, int num_particles,
     Node *root = &nodes[0];                 // TODO: optimize by not storing root?
     root->level = 0;
     root->start = 0; root->end = num_particles-1;
-    root->x_mid = 0.5; root->y_mid = 0.5;   // TODO: parameterize bounding box?
     root->z_mid = 0.5 + 0.5*I;
 
     // initialize expansions to 0 for root node
@@ -421,9 +419,11 @@ int construct_tree_parallel(Particle *particles, Node *nodes, int num_particles,
                 nodes[c_idx + q].level = level+1;
                 nodes[c_idx + q].start = partitions.quadrant_bounds[q][0];
                 nodes[c_idx + q].end = partitions.quadrant_bounds[q][1];
-                nodes[c_idx + q].x_mid = nodes[p_idx].x_mid + x_mid_shifts[q];
-                nodes[c_idx + q].y_mid = nodes[p_idx].y_mid + y_mid_shifts[q];
-                nodes[c_idx + q].z_mid = nodes[c_idx + q].x_mid + nodes[c_idx + q].y_mid*I;
+                //nodes[c_idx + q].x_mid = nodes[p_idx].x_mid + x_mid_shifts[q];
+                //nodes[c_idx + q].y_mid = nodes[p_idx].y_mid + y_mid_shifts[q];
+                //nodes[c_idx + q].z_mid = nodes[c_idx + q].x_mid + nodes[c_idx + q].y_mid*I;
+                nodes[c_idx + q].z_mid = creal(nodes[p_idx].z_mid) + x_mid_shifts[q]
+                                        + cimag(nodes[p_idx].z_mid)*I + y_mid_shifts[q]*I;
                 
                 if (!first_touch) {
                     // initialize expansions to 0 for each child node
