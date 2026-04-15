@@ -62,7 +62,7 @@ int main(int argc, char * argv[]) {
     }
     
     float epsilon = max_error / A;
-    printf("Relative precision epslon between %s and %s: %.5e\n", output_file1, output_file2, epsilon);
+    printf("Relative error epsilon between %s and %s: %.5e\n", output_file1, output_file2, epsilon);
 
     // free allocated memory
     free(particles_fmm);
