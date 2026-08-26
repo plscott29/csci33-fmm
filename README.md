@@ -1,6 +1,6 @@
 # fmm-openmp
 
-A parallel implementation of the Fast Multipole Method, by [Peter Scott](https://github.com/plscott29) and [Clint Goodwin](https://github.com/cbgoodwin).
+A parallel implementation of the Fast Multipole Method, by [Clint Goodwin](https://github.com/cbgoodwin) and [Peter Scott](https://github.com/plscott29).
 
 The FMM evaluates pairwise particle interactions
 
@@ -139,4 +139,4 @@ First-touch only pays off at 16 threads and beyond. A NUMA node on `crunchy2` ha
 
 ---
 
-Peter Scott and Clint Goodwin · April 2026 · CSCI-GA 3033: Multicore Processors
+Clint Goodwin and Peter Scott · April 2026 · CSCI-GA 3033: Multicore Processors
